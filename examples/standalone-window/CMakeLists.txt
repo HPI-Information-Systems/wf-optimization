@@ -10,8 +10,5 @@ link_directories(../../build/release/src)
 
 include_directories(../../extension/core_functions)
 
-add_executable(example main.cpp)
-target_link_libraries(example duckdb)
-
 add_executable(microbench microbench.cpp)
 target_link_libraries(microbench duckdb)

@@ -21,17 +21,18 @@
 
 namespace duckdb {
 
-PhysicalUngroupedAggregate::PhysicalUngroupedAggregate(vector<LogicalType> types,
+PhysicalUngroupedAggregate::PhysicalUngroupedAggregate(PhysicalPlan &physical_plan, vector<LogicalType> types,
                                                        vector<unique_ptr<Expression>> expressions,
-                                                       idx_t estimated_cardinality)
-    : PhysicalOperator(PhysicalOperatorType::UNGROUPED_AGGREGATE, std::move(types), estimated_cardinality),
+                                                       idx_t estimated_cardinality,
+                                                       TupleDataValidityType distinct_validity)
+    : PhysicalOperator(physical_plan, PhysicalOperatorType::UNGROUPED_AGGREGATE, std::move(types),
+                       estimated_cardinality),
       aggregates(std::move(expressions)) {
-
 	distinct_collection_info = DistinctAggregateCollectionInfo::Create(aggregates);
 	if (!distinct_collection_info) {
 		return;
 	}
-	distinct_data = make_uniq<DistinctAggregateData>(*distinct_collection_info);
+	distinct_data = make_uniq<DistinctAggregateData>(*distinct_collection_info, distinct_validity);
 }
 
 //===--------------------------------------------------------------------===//
@@ -237,7 +238,6 @@ public:
 public:
 	void InitializeDistinctAggregates(const PhysicalUngroupedAggregate &op,
 	                                  const UngroupedAggregateGlobalSinkState &gstate, ExecutionContext &context) {
-
 		if (!op.distinct_data) {
 			return;
 		}
@@ -444,6 +444,10 @@ public:
 	}
 
 	TaskExecutionResult ExecuteTask(TaskExecutionMode mode) override;
+
+	string TaskType() const override {
+		return "UngroupedDistinctAggregateFinalizeTask";
+	}
 
 private:
 	TaskExecutionResult AggregateDistinct();

@@ -19,7 +19,7 @@
 namespace duckdb {
 
 Connection::Connection(DatabaseInstance &database)
-    : context(make_shared_ptr<ClientContext>(database.shared_from_this())), warning_cb(nullptr) {
+    : context(make_shared_ptr<ClientContext>(database.shared_from_this())) {
 	auto &connection_manager = ConnectionManager::Get(database);
 	connection_manager.AddConnection(*context);
 	connection_manager.AssignConnectionId(*this);
@@ -31,18 +31,15 @@ Connection::Connection(DatabaseInstance &database)
 }
 
 Connection::Connection(DuckDB &database) : Connection(*database.instance) {
-	// Initialization of warning_cb happens in the other constructor
 }
 
-Connection::Connection(Connection &&other) noexcept : warning_cb(nullptr) {
+Connection::Connection(Connection &&other) noexcept {
 	std::swap(context, other.context);
-	std::swap(warning_cb, other.warning_cb);
 	std::swap(connection_id, other.connection_id);
 }
 
 Connection &Connection::operator=(Connection &&other) noexcept {
 	std::swap(context, other.context);
-	std::swap(warning_cb, other.warning_cb);
 	std::swap(connection_id, other.connection_id);
 	return *this;
 }
@@ -74,6 +71,10 @@ void Connection::Interrupt() {
 	context->Interrupt();
 }
 
+double Connection::GetQueryProgress() {
+	return context->GetQueryProgress().GetPercentage();
+}
+
 void Connection::EnableProfiling() {
 	context->EnableProfiling();
 }
@@ -96,6 +97,10 @@ void Connection::ForceParallelism() {
 
 unique_ptr<QueryResult> Connection::SendQuery(const string &query) {
 	return context->Query(query, true);
+}
+
+unique_ptr<QueryResult> Connection::SendQuery(unique_ptr<SQLStatement> statement) {
+	return context->Query(std::move(statement), true);
 }
 
 unique_ptr<MaterializedQueryResult> Connection::Query(const string &query) {
@@ -319,8 +324,8 @@ shared_ptr<Relation> Connection::ReadParquet(const string &parquet_file, bool bi
 	return TableFunction("parquet_scan", params, named_parameters)->Alias(parquet_file);
 }
 
-unordered_set<string> Connection::GetTableNames(const string &query) {
-	return context->GetTableNames(query);
+unordered_set<string> Connection::GetTableNames(const string &query, const bool qualified) {
+	return context->GetTableNames(query, qualified);
 }
 
 shared_ptr<Relation> Connection::RelationFromQuery(const string &query, const string &alias, const string &error) {

@@ -60,19 +60,18 @@ public:
 	//! The index constraint type
 	IndexConstraintType index_constraint_type;
 
+	vector<unique_ptr<Expression>> unbound_expressions;
+
 public:
 	bool IsBound() const override {
 		return true;
 	}
-
 	const string &GetIndexType() const override {
 		return index_type;
 	}
-
 	const string &GetIndexName() const override {
 		return name;
 	}
-
 	IndexConstraintType GetConstraintType() const override {
 		return index_constraint_type;
 	}
@@ -126,9 +125,14 @@ public:
 	idx_t GetInMemorySize();
 
 	//! Returns the string representation of an index, or only traverses and verifies the index.
-	virtual string VerifyAndToString(IndexLock &l, const bool only_verify) = 0;
+	virtual void Verify(IndexLock &l) = 0;
 	//! Obtains a lock and calls VerifyAndToString.
-	string VerifyAndToString(const bool only_verify);
+	void Verify();
+
+	//! Returns the string representation of an index.
+	virtual string ToString(IndexLock &l, bool display_ascii = false) = 0;
+	//! Obtains a lock and calls ToString.
+	string ToString(bool display_ascii = false);
 
 	//! Ensures that the node allocation counts match the node counts.
 	virtual void VerifyAllocations(IndexLock &l) = 0;
@@ -143,8 +147,10 @@ public:
 	//! Returns true if the index is affected by updates on the specified column IDs, and false otherwise
 	bool IndexIsUpdated(const vector<PhysicalIndex> &column_ids) const;
 
-	//! Returns index storage serialization information.
-	virtual IndexStorageInfo GetStorageInfo(const case_insensitive_map_t<Value> &options, const bool to_wal);
+	//! Serializes index memory to disk and returns the index storage information.
+	virtual IndexStorageInfo SerializeToDisk(QueryContext context, const case_insensitive_map_t<Value> &options);
+	//! Serializes index memory to the WAL and returns the index storage information.
+	virtual IndexStorageInfo SerializeToWAL(const case_insensitive_map_t<Value> &options);
 
 	//! Execute the index expressions on an input chunk
 	void ExecuteExpressions(DataChunk &input, DataChunk &result);
@@ -154,7 +160,8 @@ public:
 	virtual string GetConstraintViolationMessage(VerifyExistenceType verify_type, idx_t failed_index,
 	                                             DataChunk &input) = 0;
 
-	vector<unique_ptr<Expression>> unbound_expressions;
+	void ApplyBufferedAppends(const vector<LogicalType> &table_types, ColumnDataCollection &buffered_appends,
+	                          const vector<StorageIndex> &mapped_column_ids);
 
 protected:
 	//! Lock used for any changes to the index
