@@ -63,6 +63,9 @@ public:
 
 	//! The state used for reading the range collection
 	unique_ptr<WindowCursor> range_cursor;
+	bool has_filter;
+	SelectionVector sel;
+	idx_t match_count;
 };
 
 class WindowExecutorBoundsState : public WindowExecutorLocalState {

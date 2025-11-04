@@ -2,17 +2,24 @@
 
 .PHONY: duckdb clean main
 
-all: duckdb main
+all: duckdb microbench
 
 clean:
 	rm -rf build
 
 duckdb:
-	cd ../.. && make
+	cd ../.. && DISABLE_SANITIZER=1 make
 
 main:
 	mkdir -p build
-	cd build && cmake .. -DCMAKE_BUILD_TYPE=Debug && cmake --build .
+	cd build && cmake .. -DCMAKE_BUILD_TYPE=Release && cmake --build .
 	build/example
 
+microbench: build
+	build/microbench
 
+build: duckdb mb
+
+mb:
+	mkdir -p build
+	cd build && cmake .. -DCMAKE_BUILD_TYPE=Release && cmake --build .

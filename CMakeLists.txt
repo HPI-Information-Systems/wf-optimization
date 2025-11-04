@@ -1437,7 +1437,7 @@ if(BUILD_PYTHON)
     set(ALL_COMPILE_FLAGS "${ALL_COMPILE_FLAGS} /std:c++14")
   else()
     # For non-MSVC compilers, use the `-std=c++11`
-    set(ALL_COMPILE_FLAGS "${ALL_COMPILE_FLAGS} -std=c++11")
+    set(ALL_COMPILE_FLAGS "${ALL_COMPILE_FLAGS} -std=c++17")
   endif()
 
   get_target_property(duckdb_libs duckdb LINK_LIBRARIES)

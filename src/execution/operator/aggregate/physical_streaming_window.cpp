@@ -7,11 +7,15 @@
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/planner/expression/bound_window_expression.hpp"
 
+#include <iostream>
+
 namespace duckdb {
 
 PhysicalStreamingWindow::PhysicalStreamingWindow(vector<LogicalType> types, vector<unique_ptr<Expression>> select_list,
                                                  idx_t estimated_cardinality, PhysicalOperatorType type)
     : PhysicalOperator(type, std::move(types), estimated_cardinality), select_list(std::move(select_list)) {
+    	// std::cout << "PHYSUCAL STREAMING WINDOW\n";
+
 }
 
 class StreamingWindowGlobalState : public GlobalOperatorState {

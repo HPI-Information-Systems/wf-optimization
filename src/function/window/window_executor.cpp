@@ -62,7 +62,7 @@ WindowExecutorGlobalState::WindowExecutorGlobalState(const WindowExecutor &execu
 	}
 }
 
-WindowExecutorLocalState::WindowExecutorLocalState(const WindowExecutorGlobalState &gstate) {
+WindowExecutorLocalState::WindowExecutorLocalState(const WindowExecutorGlobalState &gstate) : has_filter{false}, sel{nullptr}, match_count{0} {
 }
 
 void WindowExecutorLocalState::Sink(WindowExecutorGlobalState &gstate, DataChunk &sink_chunk, DataChunk &coll_chunk,

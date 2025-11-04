@@ -2,6 +2,11 @@
 #include "duckdb/function/window/window_shared_expressions.hpp"
 #include "duckdb/function/window/window_token_tree.hpp"
 #include "duckdb/planner/expression/bound_window_expression.hpp"
+//
+#include <functional>
+#include <type_traits>
+#include <iostream>
+#include <sstream>
 
 namespace duckdb {
 
@@ -21,6 +26,7 @@ public:
 			auto &wexpr = executor.wexpr;
 			auto &arg_orders = executor.wexpr.arg_orders;
 			const auto optimize = ClientConfig::GetConfig(executor.context).enable_optimizer;
+			std::cout << std::boolalpha  << "OPTIMIZER " << optimize << "\n";
 			if (!optimize || BoundWindowExpression::GetSharedOrders(wexpr.orders, arg_orders) != arg_orders.size()) {
 				token_tree =
 				    make_uniq<WindowTokenTree>(executor.context, arg_orders, executor.arg_order_idx, payload_count);
@@ -33,6 +39,8 @@ public:
 
 	//! The token tree for ORDER BY arguments
 	unique_ptr<WindowTokenTree> token_tree;
+
+	std::atomic<uint32_t> exec_id{0};
 };
 
 //===--------------------------------------------------------------------===//
@@ -124,46 +132,127 @@ unique_ptr<WindowExecutorLocalState> WindowPeerExecutor::GetLocalState(const Win
 //===--------------------------------------------------------------------===//
 // WindowRankExecutor
 //===--------------------------------------------------------------------===//
-WindowRankExecutor::WindowRankExecutor(BoundWindowExpression &wexpr, ClientContext &context,
+template <typename Comparator, bool early_out>
+WindowRankExecutor<Comparator, early_out>::WindowRankExecutor(BoundWindowExpression &wexpr, ClientContext &context,
                                        WindowSharedExpressions &shared)
     : WindowPeerExecutor(wexpr, context, shared) {
 }
 
-void WindowRankExecutor::EvaluateInternal(WindowExecutorGlobalState &gstate, WindowExecutorLocalState &lstate,
+template <typename Comparator, bool early_out>
+void WindowRankExecutor<Comparator, early_out>::EvaluateInternal(WindowExecutorGlobalState &gstate, WindowExecutorLocalState &lstate,
                                           DataChunk &eval_chunk, Vector &result, idx_t count, idx_t row_idx) const {
 	auto &gpeer = gstate.Cast<WindowPeerGlobalState>();
 	auto &lpeer = lstate.Cast<WindowPeerLocalState>();
 	auto rdata = FlatVector::GetData<uint64_t>(result);
 
+	const auto comparator = Comparator{};
+
+	const auto my_id = ++gpeer.exec_id;
+
+	std::cout << "ID " << my_id << "\trow_idx " << row_idx << "\tcount " << count << "\n";
+	// eval_chunk.Print();
+
+	auto match_count = idx_t{0};
+	if constexpr (!std::is_same<Comparator, NoneComparator>::value) {
+		lstate.sel.Initialize(count);
+		lstate.has_filter = true;
+	}
+
 	if (gpeer.use_framing) {
+		std::cout << "use framing\n";
 		auto frame_begin = FlatVector::GetData<const idx_t>(lpeer.bounds.data[FRAME_BEGIN]);
 		auto frame_end = FlatVector::GetData<const idx_t>(lpeer.bounds.data[FRAME_END]);
 		if (gpeer.token_tree) {
+			std::cout << "token tree\n";
 			for (idx_t i = 0; i < count; ++i, ++row_idx) {
-				rdata[i] = gpeer.token_tree->Rank(frame_begin[i], frame_end[i], row_idx);
+				auto rnk = gpeer.token_tree->Rank(frame_begin[i], frame_end[i], row_idx);
+				rdata[i] = rnk;
+
+				if constexpr (!std::is_same<Comparator, NoneComparator>::value) {
+					if (comparator(rnk, 2)) {
+						lstate.sel.set_index(match_count++, i);
+						continue;
+					}
+
+					if constexpr (early_out) {
+						// auto msg = std::stringstream{};
+						// msg << __FILE__ << ":" << __LINE__ << "  " << match_count << "\n";
+						// std::cout << msg.str();
+						break;
+					}
+				}
 			}
 		} else {
+			std::cout << "no token tree\n";
 			auto peer_begin = FlatVector::GetData<const idx_t>(lpeer.bounds.data[PEER_BEGIN]);
 			for (idx_t i = 0; i < count; ++i, ++row_idx) {
 				//	Clamp peer to the frame
 				const auto frame_peer_begin = MaxValue(frame_begin[i], peer_begin[i]);
-				rdata[i] = (frame_peer_begin - frame_begin[i]) + 1;
+				auto rnk = (frame_peer_begin - frame_begin[i]) + 1;
+				rdata[i] = rnk;
+
+				if constexpr (!std::is_same<Comparator, NoneComparator>::value) {
+					if (comparator(rnk, 20)) {
+						lstate.sel.set_index(match_count++, i);
+						continue;
+					}
+					if constexpr (early_out) {
+						// auto msg = std::stringstream{};
+						// msg << __FILE__ << ":" << __LINE__ << "  " << match_count << "\n";
+						// std::cout << msg.str();
+						break;
+					}
+				}
 			}
+		}
+
+		if constexpr (!std::is_same<Comparator, NoneComparator>::value) {
+			lstate.match_count = match_count;
 		}
 		return;
 	}
+
+	std::cout << "no framing\n";
 
 	//	Reset to "previous" row
 	auto partition_begin = FlatVector::GetData<const idx_t>(lpeer.bounds.data[PARTITION_BEGIN]);
 	auto peer_begin = FlatVector::GetData<const idx_t>(lpeer.bounds.data[PEER_BEGIN]);
 	lpeer.rank = (peer_begin[0] - partition_begin[0]) + 1;
 	lpeer.rank_equal = (row_idx - peer_begin[0]);
+	lpeer.bounds.Print();
+
+	// auto ranks = std::stringstream{};
 
 	for (idx_t i = 0; i < count; ++i, ++row_idx) {
 		lpeer.NextRank(partition_begin[i], peer_begin[i], row_idx);
 		rdata[i] = lpeer.rank;
+		// ranks << lpeer.rank << " ";
+		if constexpr (!std::is_same<Comparator, NoneComparator>::value) {
+			if (comparator(lpeer.rank, 10)) {
+				lstate.sel.set_index(match_count++, i);
+				continue;
+			}
+			if constexpr (early_out) {
+				// auto msg = std::stringstream{};
+				// msg << __FILE__ << ":" << __LINE__ << "  " << match_count << "\n";
+				// std::cout << msg.str();
+				break;
+			}
+		}
+	}
+
+	// ranks << "\n";
+	// std::cout << ranks.str();
+	std::cout << "\n";
+
+	if constexpr (!std::is_same<Comparator, NoneComparator>::value) {
+		lstate.match_count = match_count;
 	}
 }
+
+template class WindowRankExecutor<NoneComparator, false>;
+template class WindowRankExecutor<std::less<idx_t>, false>;
+template class WindowRankExecutor<std::less<idx_t>, true>;
 
 //===--------------------------------------------------------------------===//
 // WindowDenseRankExecutor

@@ -24,6 +24,9 @@ public:
 	vector<column_t> arg_order_idx;
 };
 
+struct NoneComparator {};
+
+template <typename Comparator = NoneComparator, bool early_out = false>
 class WindowRankExecutor : public WindowPeerExecutor {
 public:
 	WindowRankExecutor(BoundWindowExpression &wexpr, ClientContext &context, WindowSharedExpressions &shared);
