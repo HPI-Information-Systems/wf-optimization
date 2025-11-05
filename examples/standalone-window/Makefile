@@ -1,5 +1,5 @@
 
-LLVM_PATH ?= /usr/bin
+LLVM_PATH ?= /usr/
 
 .PHONY: duckdb clean main
 
