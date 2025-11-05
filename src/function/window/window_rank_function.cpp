@@ -124,7 +124,9 @@ unique_ptr<GlobalSinkState> WindowPeerExecutor::GetGlobalState(ClientContext &cl
 
 unique_ptr<LocalSinkState> WindowPeerExecutor::GetLocalState(ExecutionContext &context,
                                                              const GlobalSinkState &gstate) const {
-	return make_uniq<WindowPeerLocalState>(context, gstate.Cast<WindowPeerGlobalState>());
+	auto state = make_uniq<WindowPeerLocalState>(context, gstate.Cast<WindowPeerGlobalState>());
+	state->predicate_value = WindowOperatorConfig::get().predicate_value;
+	return state;
 }
 
 //===--------------------------------------------------------------------===//
@@ -146,8 +148,9 @@ void WindowRankExecutor<Comparator, early_out>::EvaluateInternal(ExecutionContex
 	const auto comparator = Comparator{};
 
 	const auto my_id = ++gpeer.exec_id;
+	const auto predicate_value = lpeer.predicate_value;
 
-	std::cout << "ID " << my_id << "\trow_idx " << row_idx << "\tcount " << count << "\n";
+	// std::cout << "ID " << my_id << "\trow_idx " << row_idx << "\tcount " << count << "\n";
 	// eval_chunk.Print();
 
 	auto match_count = idx_t{0};
@@ -157,17 +160,17 @@ void WindowRankExecutor<Comparator, early_out>::EvaluateInternal(ExecutionContex
 	}
 
 	if (gpeer.use_framing) {
-		std::cout << "use framing\n";
+		// std::cout << "use framing\n";
 		auto frame_begin = FlatVector::GetData<const idx_t>(lpeer.bounds.data[FRAME_BEGIN]);
 		auto frame_end = FlatVector::GetData<const idx_t>(lpeer.bounds.data[FRAME_END]);
 		if (gpeer.token_tree) {
-			std::cout << "token tree\n";
+			// std::cout << "token tree\n";
 			for (idx_t i = 0; i < count; ++i, ++row_idx) {
 				const auto rnk = UnsafeNumericCast<int64_t>(gpeer.token_tree->Rank(frame_begin[i], frame_end[i], row_idx));
 				rdata[i] = rnk;
 
 				if constexpr (!std::is_same<Comparator, NoneComparator>::value) {
-					if (comparator(rnk, 2)) {
+					if (comparator(rnk, predicate_value)) {
 						lpeer.sel.set_index(match_count++, i);
 						continue;
 					}
@@ -181,7 +184,7 @@ void WindowRankExecutor<Comparator, early_out>::EvaluateInternal(ExecutionContex
 				}
 			}
 		} else {
-			std::cout << "no token tree\n";
+			// std::cout << "no token tree\n";
 			auto peer_begin = FlatVector::GetData<const idx_t>(lpeer.bounds.data[PEER_BEGIN]);
 			for (idx_t i = 0; i < count; ++i, ++row_idx) {
 				//	Clamp peer to the frame
@@ -190,7 +193,7 @@ void WindowRankExecutor<Comparator, early_out>::EvaluateInternal(ExecutionContex
 				rdata[i] = rnk;
 
 				if constexpr (!std::is_same<Comparator, NoneComparator>::value) {
-					if (comparator(rnk, 20)) {
+					if (comparator(rnk, predicate_value)) {
 						lpeer.sel.set_index(match_count++, i);
 						continue;
 					}
@@ -210,38 +213,52 @@ void WindowRankExecutor<Comparator, early_out>::EvaluateInternal(ExecutionContex
 		return;
 	}
 
-	std::cout << "no framing\n";
+	// std::cout << "no framing\n";
 
 	//	Reset to "previous" row
 	auto partition_begin = FlatVector::GetData<const idx_t>(lpeer.bounds.data[PARTITION_BEGIN]);
 	auto peer_begin = FlatVector::GetData<const idx_t>(lpeer.bounds.data[PEER_BEGIN]);
 	lpeer.rank = (peer_begin[0] - partition_begin[0]) + 1;
 	lpeer.rank_equal = (row_idx - peer_begin[0]);
-	lpeer.bounds.Print();
+	// lpeer.bounds.Print();
+	// std::cout << lpeer.bounds.data[PARTITION_BEGIN].ToString(lpeer.bounds.size());
+	// std::cout << "\n";
+	// std::cout << lpeer.bounds.data[PARTITION_END].ToString(lpeer.bounds.size());
+	// std::cout << "\n";
 
 	// auto ranks = std::stringstream{};
 
+	// std::cout << "count=" << count << "  row_idx=" << row_idx << "\n";
+
 	for (idx_t i = 0; i < count; ++i, ++row_idx) {
 		lpeer.NextRank(partition_begin[i], peer_begin[i], row_idx);
-		rdata[i] = UnsafeNumericCast<int64_t>(lpeer.rank);
+		const auto rnk = UnsafeNumericCast<int64_t>(lpeer.rank);
+		rdata[i] = rnk;
+		// std::cout << "\ti=" << i << "  row_idx=" << row_idx << "  rnk=" << rnk << "  val=" << predicate_value  << "\n";
 		// ranks << lpeer.rank << " ";
 		if constexpr (!std::is_same<Comparator, NoneComparator>::value) {
-			if (comparator(UnsafeNumericCast<int64_t>(lpeer.rank), 10)) {
+			if (comparator(rnk, predicate_value)) {
 				lpeer.sel.set_index(match_count++, i);
 				continue;
 			}
 			if constexpr (early_out) {
+				const auto partition_end = FlatVector::GetData<const idx_t>(lpeer.bounds.data[PARTITION_END])[i];
+				const auto diff = partition_end - row_idx - 1;
+				i += diff;
+				row_idx = partition_end - 1;
+				// std::cout << "\t\tset i=" << i << "  row_idx=" << row_idx << "\n";
+
 				// auto msg = std::stringstream{};
 				// msg << __FILE__ << ":" << __LINE__ << "  " << match_count << "\n";
 				// std::cout << msg.str();
-				break;
+				// break;
 			}
 		}
 	}
 
 	// ranks << "\n";
 	// std::cout << ranks.str();
-	std::cout << "\n";
+	// std::cout << "\n";
 
 	if constexpr (!std::is_same<Comparator, NoneComparator>::value) {
 		lpeer.match_count = match_count;
@@ -249,8 +266,8 @@ void WindowRankExecutor<Comparator, early_out>::EvaluateInternal(ExecutionContex
 }
 
 template class WindowRankExecutor<NoneComparator, false>;
-template class WindowRankExecutor<std::less<uint64_t>, false>;
-template class WindowRankExecutor<std::less<uint64_t>, true>;
+template class WindowRankExecutor<std::less_equal<uint64_t>, false>;
+template class WindowRankExecutor<std::less_equal<uint64_t>, true>;
 
 //===--------------------------------------------------------------------===//
 // WindowDenseRankExecutor

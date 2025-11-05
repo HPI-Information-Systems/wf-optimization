@@ -37,8 +37,8 @@ protected:
 	                      OperatorSinkInput &sink) const override;
 };
 extern template class WindowRankExecutor<NoneComparator, false>;
-extern template class WindowRankExecutor<std::less<uint64_t>, false>;
-extern template class WindowRankExecutor<std::less<uint64_t>, true>;
+extern template class WindowRankExecutor<std::less_equal<uint64_t>, false>;
+extern template class WindowRankExecutor<std::less_equal<uint64_t>, true>;
 
 class WindowDenseRankExecutor : public WindowPeerExecutor {
 public:

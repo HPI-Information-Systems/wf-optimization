@@ -250,10 +250,10 @@ static unique_ptr<WindowExecutor> WindowExecutorFactory(BoundWindowExpression &w
 		return make_uniq<WindowDenseRankExecutor>(wexpr, shared);
 	case ExpressionType::WINDOW_RANK:
 		if (early_out) {
-			return make_uniq<WindowRankExecutor<std::less<uint64_t>, true>>(wexpr, shared);
+			return make_uniq<WindowRankExecutor<std::less_equal<uint64_t>, true>>(wexpr, shared);
 		}
 		if (use_filter) {
-			return make_uniq<WindowRankExecutor<std::less<uint64_t>, false>>(wexpr, shared);
+			return make_uniq<WindowRankExecutor<std::less_equal<uint64_t>, false>>(wexpr, shared);
 		}
 		return make_uniq<WindowRankExecutor<NoneComparator, false>>(wexpr, shared);
 	case ExpressionType::WINDOW_PERCENT_RANK:
@@ -981,7 +981,7 @@ void WindowLocalSourceState::GetData(ExecutionContext &context, DataChunk &resul
 	output_chunk.Reset();
 	SelectionVector* sel = nullptr;
 	auto row_count = idx_t{0};
-	std::cout << "\nSource exec " << ++source_exec_id << "\n";
+	// std::cout << "\nSource exec " << ++source_exec_id << "\n";
 	for (idx_t expr_idx = 0; expr_idx < executors.size(); ++expr_idx) {
 		auto &executor = *executors[expr_idx];
 		auto &result = output_chunk.data[expr_idx];

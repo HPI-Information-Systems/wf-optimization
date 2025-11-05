@@ -1,4 +1,5 @@
 
+LLVM_PATH ?= /usr/bin
 
 .PHONY: duckdb clean main
 
@@ -8,7 +9,7 @@ clean:
 	rm -rf build
 
 duckdb:
-	cd ../.. && DISABLE_SANITIZER=1 CXX_STANDARD=17 CMAKE_LLVM_PATH=/opt/homebrew/opt/llvm@20 DISABLE_VPTR_SANITIZER=1 make release
+	cd ../.. && DISABLE_SANITIZER=1 CXX_STANDARD=17 CMAKE_LLVM_PATH=${LLVM_PATH} DISABLE_VPTR_SANITIZER=1 make release
 
 main:
 	mkdir -p build
@@ -22,4 +23,4 @@ build: duckdb mb
 
 mb:
 	mkdir -p build
-	cd build && cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=/opt/homebrew/opt/llvm@20/bin/clang -DCMAKE_CXX_COMPILER=/opt/homebrew/opt/llvm@20/bin/clang++ && cmake --build .
+	cd build && cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=${LLVM_PATH}/bin/clang -DCMAKE_CXX_COMPILER=${LLVM_PATH}/bin/clang++ && cmake --build .

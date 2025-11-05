@@ -11,6 +11,7 @@
 #include "duckdb/execution/physical_operator_states.hpp"
 #include "duckdb/function/window/window_boundaries_state.hpp"
 #include "duckdb/function/window/window_collection.hpp"
+#include "duckdb/execution/operator/aggregate/window_operator_config.hpp"
 
 namespace duckdb {
 
@@ -50,7 +51,8 @@ public:
 	unique_ptr<WindowCursor> range_cursor;
 	bool has_filter;
 	SelectionVector sel;
-	idx_t match_count;
+	idx_t match_count{0};
+	uint64_t predicate_value{0};
 };
 
 class WindowExecutorBoundsLocalState : public WindowExecutorLocalState {

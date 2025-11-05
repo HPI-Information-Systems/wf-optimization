@@ -348,6 +348,10 @@ WindowBoundsSet WindowBoundariesState::GetWindowBounds(const BoundWindowExpressi
 			result.insert(FRAME_END);
 			result.insert(PEER_BEGIN);
 		}
+
+		if (WindowOperatorConfig::get().do_early_out) {
+			result.insert(PARTITION_END);
+		}
 		break;
 	case ExpressionType::WINDOW_RANK_DENSE:
 		result.insert(PARTITION_BEGIN);

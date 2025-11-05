@@ -15,6 +15,7 @@ class WindowOperatorConfig {
   bool do_filter{false};
   bool do_early_out{false};
   bool skip_sort{false};
+  uint64_t predicate_value{0};
 
  protected:
   WindowOperatorConfig() = default;
