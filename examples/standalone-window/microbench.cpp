@@ -48,7 +48,6 @@ int main(int argc, char* argv[]) {
 
 	const auto partition_counts = std::vector<size_t>{10, 100, 1'000, 10'000, 100'000, 1'000'000, 10'000'000};
 
-
 	const auto level_to_str = [](const auto level) {
 		switch (level) {
 			case OptimizationLevel::None:

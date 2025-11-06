@@ -220,11 +220,41 @@ void WindowRankExecutor<Comparator, early_out>::EvaluateInternal(ExecutionContex
 	auto peer_begin = FlatVector::GetData<const idx_t>(lpeer.bounds.data[PEER_BEGIN]);
 	lpeer.rank = (peer_begin[0] - partition_begin[0]) + 1;
 	lpeer.rank_equal = (row_idx - peer_begin[0]);
+	auto next_partition_begin = lpeer.partition_begins.cbegin();
+
+	if constexpr (early_out) {
+		while (next_partition_begin != lpeer.partition_begins.cend() && *next_partition_begin <= row_idx) {
+			++next_partition_begin;
+		}
+	}
+
+	// if (!std::is_same<Comparator, NoneComparator>::value) {
+	// 	std::cout << "filter\n";
+	// }
+	// if (early_out) {
+	// 	std::cout << "early_out\n";
+	// }
 	// lpeer.bounds.Print();
 	// std::cout << lpeer.bounds.data[PARTITION_BEGIN].ToString(lpeer.bounds.size());
 	// std::cout << "\n";
 	// std::cout << lpeer.bounds.data[PARTITION_END].ToString(lpeer.bounds.size());
 	// std::cout << "\n";
+
+	// const auto print_vec = [](const auto& vec) {
+	// 	auto stream = std::stringstream{};
+	// 	stream << "{ ";
+	// 	for (auto it = vec.cbegin(); it != vec.cend(); ++it) {
+	// 		if (it != vec.begin()) {
+	// 			stream << ", ";
+	// 		}
+	// 		stream << *it;
+	// 	}
+	// 	stream << " }";
+
+	// 	return stream.str();
+	// };
+
+	// std::cout << "partition begins: " << print_vec(lpeer.partition_begins) << "\n";
 
 	// auto ranks = std::stringstream{};
 
@@ -242,11 +272,16 @@ void WindowRankExecutor<Comparator, early_out>::EvaluateInternal(ExecutionContex
 				continue;
 			}
 			if constexpr (early_out) {
-				const auto partition_end = FlatVector::GetData<const idx_t>(lpeer.bounds.data[PARTITION_END])[i];
+				//const auto partition_end = FlatVector::GetData<const idx_t>(lpeer.bounds.data[PARTITION_END])[i];
+				// std::cout << "\t\tset i=" << i << "  row_idx=" << row_idx << "\n";
+				if (next_partition_begin == lpeer.partition_begins.cend()) {
+					break;
+				}
+				const auto partition_end = *next_partition_begin;
+				++next_partition_begin;
 				const auto diff = partition_end - row_idx - 1;
 				i += diff;
 				row_idx = partition_end - 1;
-				// std::cout << "\t\tset i=" << i << "  row_idx=" << row_idx << "\n";
 
 				// auto msg = std::stringstream{};
 				// msg << __FILE__ << ":" << __LINE__ << "  " << match_count << "\n";

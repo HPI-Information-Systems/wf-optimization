@@ -53,6 +53,7 @@ public:
 	SelectionVector sel;
 	idx_t match_count{0};
 	uint64_t predicate_value{0};
+	vector<idx_t> partition_begins;
 };
 
 class WindowExecutorBoundsLocalState : public WindowExecutorLocalState {

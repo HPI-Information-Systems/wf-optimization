@@ -12,3 +12,6 @@ include_directories(../../extension/core_functions)
 
 add_executable(microbench microbench.cpp)
 target_link_libraries(microbench duckdb)
+
+add_executable(playground playground.cpp)
+target_link_libraries(playground duckdb)
