@@ -60,6 +60,7 @@ int main(int argc, char* argv[]) {
 			case OptimizationLevel::SkipSort:
 				return "SkipSort";
 		}
+		throw std::runtime_error("GCC thinks this is reachable.");
 	};
 
 	const auto table_file_name = [](auto p, auto r){
@@ -134,6 +135,9 @@ int main(int argc, char* argv[]) {
 
 			const auto predicate_value = uint64_t{3};
 			WindowOperatorConfig::get().predicate_value = predicate_value;
+			WindowOperatorConfig::get().do_filter = level != OptimizationLevel::None;
+			WindowOperatorConfig::get().do_early_out = level == OptimizationLevel::EarlyOut;
+			WindowOperatorConfig::get().skip_sort = level == OptimizationLevel::SkipSort;
 
 			string query = WindowOperatorConfig::get().do_filter ?
 			 "SELECT * from (select a, b, rank() OVER (PARTITION BY a ORDER BY b) rnk FROM eval) t" :

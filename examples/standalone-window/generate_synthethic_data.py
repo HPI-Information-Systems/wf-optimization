@@ -22,6 +22,7 @@ def main(cardinality, partitions, directory):
 
     random.Random(17).shuffle(tuples)
 
+    os.makedirs(directory, exist_ok=True)
     with open(file_name, "w") as f:
         for a, b in tuples:
             f.write(f"{a},{b},{b}\n")
