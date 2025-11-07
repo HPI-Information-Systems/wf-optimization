@@ -129,7 +129,7 @@ int main(int argc, char* argv[]) {
 			break;
 		}
 
-		const auto num_runs = (core_count == 1 || row_count >= 1'000'000) ? 100 : 1'000;
+		const auto num_runs = ((core_count == 1 && row_count > 100'000) || row_count > 1'000'000) ? 100 : 1'000;
 
 		std::cout << row_count << " rows, " << partition_count << " partitions, " << num_runs << " runs\n";
 		for (auto level_int = uint8_t{0}; level_int < 3; ++level_int) {
