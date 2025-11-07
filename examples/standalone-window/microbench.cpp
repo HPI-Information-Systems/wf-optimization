@@ -20,6 +20,10 @@
 #include <fstream>
 #include <cstdlib>
 #include <stdexcept>
+#include <cstdio>
+#include <memory>
+#include <string>
+#include <array>
 
 using namespace duckdb;
 
@@ -31,27 +35,59 @@ bool fileExists(const std::string& filename) {
     return file.good();  // Returns true if the file exists and is accessible
 }
 
+std::string execute_command(const std::string& command) {
+    std::array<char, 128> buffer;
+    std::string result;
+    std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(command.c_str(), "r"), pclose);
+    if (!pipe) {
+        throw std::runtime_error("popen() failed!");
+    }
+    while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr) {
+        result += buffer.data();
+    }
+    return result;
+}
+
 
 int main(int argc, char* argv[]) {
 	auto row_count = 1'000'000;
+	auto core_count = std::stoul(execute_command("nproc"));
+	auto skewed = false;
 
-	if (argc == 2) {
+	if (argc >= 2) {
 		row_count = std::atoi(argv[1]);
 	}
-	// auto* config = new DBConfig();
-	// config->options.maximum_threads = idx_t{1};;
-	// DuckDB db(nullptr, config);
-	DuckDB db(nullptr);
+
+	for (auto arg_id = 2; arg_id < argc; ++arg_id) {
+		const auto argument = std::string{argv[arg_id]};
+		if (argument == "--st") {
+			core_count = 1;
+		} else if (argument == "--skewed") {
+			skewed = true;
+		} else {
+			throw std::runtime_error("Unrecognized option: '" + argument + "'.");
+		}
+	}
+
+	std::cout << "Using " << core_count << " core(s); with" << (skewed ? "" : "out") << " skew\n";
+
+	auto* config = new DBConfig();
+	config->options.maximum_threads = core_count;
+	DuckDB db(nullptr, config);
 	// std::cout << db.NumberOfThreads() << "\n";
 	Connection con(db);
 	// con.SetAutoCommit(true);
 
-	const auto partition_counts = std::vector<size_t>{10, 100, 1'000, 10'000, 100'000, 1'000'000, 10'000'000};
+	const auto partition_counts_base = size_t{10};
+	auto partition_counts = std::vector<size_t>{partition_counts_base};
+	while (partition_counts.back() < row_count) {
+		partition_counts.push_back(partition_counts.back() * partition_counts_base);
+	}
 
 	const auto level_to_str = [](const auto level) {
 		switch (level) {
 			case OptimizationLevel::None:
-				return "None";
+				return "Default";
 			case OptimizationLevel::Filter:
 				return "Filter";
 			case OptimizationLevel::EarlyOut:
@@ -62,9 +98,9 @@ int main(int argc, char* argv[]) {
 		throw std::runtime_error("GCC thinks this is reachable.");
 	};
 
-	const auto table_file_name = [](auto p, auto r){
+	const auto table_file_name = [&](auto p, auto r){
 		auto filename = std::stringstream{};
-		filename << "data/synthetic_" << r << "-rows_" << p << "-partitions.csv";
+		filename << "data/synthetic_" << r << "-rows_" << p << "-partitions" << (skewed ? "_skewed" : "" ) << ".csv";
 		return filename.str();
 	};
 
@@ -76,14 +112,13 @@ int main(int argc, char* argv[]) {
 		const auto filename = table_file_name(partition_count, row_count);
 
 		if (!fileExists(filename)) {
-			throw std::runtime_error("File '" + filename + "'does not exist!");
+			throw std::runtime_error("File '" + filename + "' does not exist!");
 		}
 	}
 
 	// std::cout << "== Import data ==\n";
-	constexpr auto num_runs = 1'000;
 	auto ofstream = std::ofstream{};
-	const auto result_filename = "microbenchmark_" + std::to_string(row_count) + "-rows.csv";
+	const auto result_filename = "microbenchmark_" + std::to_string(row_count) + "-rows_" + (core_count == 1 ? "st" : "mt") + (skewed ? "_skewed" : "" ) + ".csv";
 	ofstream.open(result_filename);
 	ofstream << "CONFIGURATION,ROW_COUNT,PARTITION_COUNT,RESULTS_PER_PARTITION,RESULT_COUNT,RUNTIME_NS\n";
 	ofstream << std::fixed;
@@ -94,7 +129,9 @@ int main(int argc, char* argv[]) {
 			break;
 		}
 
-		std::cout << row_count << " rows, " << partition_count << " partitions\n";
+		const auto num_runs = (core_count == 1 || row_count >= 1'000'000) ? 100 : 1'000;
+
+		std::cout << row_count << " rows, " << partition_count << " partitions, " << num_runs << " runs\n";
 		for (auto level_int = uint8_t{0}; level_int < 3; ++level_int) {
 			const auto level = static_cast<OptimizationLevel>(level_int);
 			const auto level_str = level_to_str(level);
