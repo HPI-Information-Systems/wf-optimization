@@ -24,12 +24,14 @@ def main(cardinality, partitions, directory, skewed):
     else:
         skewness = 1.3
         zipf_pdf = [k**-skewness/scipy.special.zeta(skewness) for k in range(1, partitions + 1)]
-        probs = [p / sum(zipf_pdf) for p in zipf_pdf]
+        norm = sum(zipf_pdf)
+        probs = [p / norm for p in zipf_pdf]
         counts = [p * cardinality for p in probs]
         rows_per_partition = [int(i) for i in counts]
+        init_count = sum(rows_per_partition)
+        remaining_tuples = cardinality - init_count
         remainders = [(counts[i] % 1, i) for i in range(partitions)]
         remainders.sort(key=lambda x: x[0], reverse=True)
-        remaining_tuples = cardinality - sum(rows_per_partition)
         while remaining_tuples > 0:
             rows_per_partition[remainders[0][1]] += 1
             remainders = remainders[1:]
