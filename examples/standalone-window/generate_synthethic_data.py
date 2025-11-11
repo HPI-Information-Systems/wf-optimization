@@ -3,6 +3,7 @@
 import argparse as ap
 import random
 import os
+from collections import defaultdict
 
 import numpy as np
 import scipy
@@ -16,26 +17,47 @@ def parse_args():
     return parser.parse_args()
 
 def main(cardinality, partitions, directory, skewed):
-    assert cardinality > partitions, "Cardinality must be larger than number of partitions"
-    file_name = f"synthetic_{cardinality}-rows_{partitions}-partitions{'_skewed' if skewed else ''}.csv"
-
     if not skewed:
+        assert cardinality > partitions, "Cardinality must be larger than number of partitions"
         rows_per_partition = [round(cardinality / partitions) for _ in range(partitions)]
     else:
         skewness = 1.3
-        zipf_pdf = [k**-skewness/scipy.special.zeta(skewness) for k in range(1, partitions + 1)]
-        norm = sum(zipf_pdf)
-        probs = [p / norm for p in zipf_pdf]
-        counts = [p * cardinality for p in probs]
-        rows_per_partition = [int(i) for i in counts]
-        init_count = sum(rows_per_partition)
-        remaining_tuples = cardinality - init_count
-        remainders = [(counts[i] % 1, i) for i in range(partitions)]
-        remainders.sort(key=lambda x: x[0], reverse=True)
-        while remaining_tuples > 0:
-            rows_per_partition[remainders[0][1]] += 1
-            remainders = remainders[1:]
-            remaining_tuples -= 1
+
+        rand = np.random.default_rng(1717)
+        distribution = rand.zipf(skewness, size=cardinality)
+        rows_per_partition = defaultdict(int)
+        for i in distribution:
+            rows_per_partition[i] += 1
+        rows_per_partition = [c for c in rows_per_partition.values()]
+        rows_per_partition.sort(reverse=True)
+        partitions = len(rows_per_partition)
+
+        # print("PDF")
+        # zipf_pdf = [cardinality*(k**-skewness)/scipy.special.zeta(skewness) for k in range(1, partitions + 1)]
+        # norm = sum(zipf_pdf)
+        # print("probs")
+        # probs = [p / norm for p in zipf_pdf]
+        # print("counts")
+        # counts = [p * cardinality for p in probs]
+        # rows_per_partition = [int(i) for i in counts]
+        # init_count = sum(rows_per_partition)
+        # remaining_tuples = cardinality - init_count
+        # print(remaining_tuples, partitions, remaining_tuples / partitions)
+        # print("remainders")
+        # remainders = [(counts[i] % 1, i) for i in range(partitions)]
+        # print("sort")
+        # remainders.sort(key=lambda x: x[0], reverse=True)
+        # print("distribute")
+        # for _, offset in remainders:
+        #     if remaining_tuples == 0:
+        #         break
+        #     rows_per_partition[offset] += 1
+        #     remaining_tuples -= 1
+        # print(sum(rows_per_partition))
+        # print(rows_per_partition[:10])
+        # print(rows_per_partition[-10:])
+        # print(sum([1 for i in rows_per_partition if i > 0]))
+        # print(sum([1 for i in rows_per_partition if i > 1]))
 
     tuples = []
     for partition, count in zip(range(partitions), rows_per_partition):
@@ -45,6 +67,7 @@ def main(cardinality, partitions, directory, skewed):
     random.Random(17).shuffle(tuples)
 
     os.makedirs(directory, exist_ok=True)
+    file_name = f"synthetic_{cardinality}-rows_{partitions}-partitions{'_skewed' if skewed else ''}.csv"
     with open(os.path.join(directory, file_name), "w") as f:
         for a, b in tuples:
             f.write(f"{a},{b},{b}\n")

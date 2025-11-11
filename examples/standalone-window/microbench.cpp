@@ -18,12 +18,15 @@
 #include <ratio>
 #include <sstream>
 #include <fstream>
+#include <filesystem>
 #include <cstdlib>
 #include <stdexcept>
 #include <cstdio>
 #include <memory>
 #include <string>
 #include <array>
+#include <tuple>
+#include <regex>
 
 using namespace duckdb;
 
@@ -50,20 +53,19 @@ std::string execute_command(const std::string& command) {
 
 
 int main(int argc, char* argv[]) {
-	auto row_count = 1'000'000;
+	auto row_count = size_t{1'000'000};
 	auto core_count = std::stoul(execute_command("nproc"));
 	auto skewed = false;
 
-	if (argc >= 2) {
-		row_count = std::atoi(argv[1]);
-	}
 
-	for (auto arg_id = 2; arg_id < argc; ++arg_id) {
+	for (auto arg_id = 1; arg_id < argc; ++arg_id) {
 		const auto argument = std::string{argv[arg_id]};
 		if (argument == "--st") {
 			core_count = 1;
 		} else if (argument == "--skewed") {
 			skewed = true;
+		} else if (arg_id == 2) {
+			row_count = std::stoi(argument);
 		} else {
 			throw std::runtime_error("Unrecognized option: '" + argument + "'.");
 		}
@@ -78,10 +80,55 @@ int main(int argc, char* argv[]) {
 	Connection con(db);
 	// con.SetAutoCommit(true);
 
-	const auto partition_counts_base = size_t{10};
-	auto partition_counts = std::vector<size_t>{partition_counts_base};
-	while (partition_counts.back() < row_count) {
-		partition_counts.push_back(partition_counts.back() * partition_counts_base);
+	const auto table_file_name = [&](auto p, auto r){
+		auto filename = std::stringstream{};
+		filename << "data/synthetic_" << r << "-rows_" << p << "-partitions" << (skewed ? "_skewed" : "" ) << ".csv";
+		return filename.str();
+	};
+
+	auto file_names = std::vector<std::tuple<size_t, size_t, std::string>>{};
+	if (!skewed) {
+		const auto partition_counts_base = size_t{10};
+		while (file_names.empty() || std::get<1>(file_names.back()) < row_count) {
+			const auto partition_count = file_names.empty() ? partition_counts_base : std::get<1>(file_names.back()) * partition_counts_base;
+			const auto filename = table_file_name(partition_count, row_count);
+
+			if (!fileExists(filename)) {
+				throw std::runtime_error("File '" + filename + "' does not exist!");
+			}
+
+			file_names.emplace_back(row_count, partition_count, filename);
+		}
+	} else {
+		const auto path = std::filesystem::path{"data"};
+		for (const auto& entry : std::filesystem::directory_iterator(path)) {
+			if(!std::filesystem::is_regular_file(entry)) {
+				continue;
+			}
+			const auto filename = entry.path().filename().string();
+			if (filename.find("_skewed") == std::string::npos) {
+				continue;
+			}
+			std::cout << filename << "\n";
+			auto row_count_match = std::smatch{};
+			if (!std::regex_search(filename, row_count_match, std::regex{"\\d+-rows"})) {
+				continue;
+			}
+			const auto file_row_count = std::stoul(row_count_match[0].str().substr(0, row_count_match[0].length() - 5));
+			std::cout << file_row_count << " rows\n";
+
+			auto partition_count_match = std::smatch{};
+			if (!std::regex_search(filename, partition_count_match, std::regex{"\\d+-partitions"})) {
+				continue;
+			}
+			const auto partition_count = std::stoul(partition_count_match[0].str().substr(0, partition_count_match[0].length() - 11));
+			std::cout << partition_count << " partitions\n";
+			file_names.emplace_back(file_row_count, partition_count, "data/" + filename);
+		}
+
+		std::sort(file_names.begin(), file_names.end(), [](const auto& lhs, const auto& rhs){
+			return std::get<0>(lhs) != std::get<0>(rhs) ? std::get<0>(lhs) < std::get<0>(rhs) : std::get<1>(lhs) < std::get<1>(rhs);
+		});
 	}
 
 	const auto level_to_str = [](const auto level) {
@@ -98,76 +145,24 @@ int main(int argc, char* argv[]) {
 		throw std::runtime_error("GCC thinks this is reachable.");
 	};
 
-	const auto table_file_name = [&](auto p, auto r){
-		auto filename = std::stringstream{};
-		filename << "data/synthetic_" << r << "-rows_" << p << "-partitions" << (skewed ? "_skewed" : "" ) << ".csv";
-		return filename.str();
-	};
-
-	for (const auto partition_count : partition_counts) {
-		if (partition_count >= row_count) {
-			break;
-		}
-
-		const auto filename = table_file_name(partition_count, row_count);
-
-		if (!fileExists(filename)) {
-			throw std::runtime_error("File '" + filename + "' does not exist!");
-		}
-	}
-
-	// std::cout << "== Import data ==\n";
 	auto ofstream = std::ofstream{};
-	const auto result_filename = "microbenchmark_" + std::to_string(row_count) + "-rows_" + (core_count == 1 ? "st" : "mt") + (skewed ? "_skewed" : "" ) + ".csv";
+	const auto result_filename = "microbenchmark_" + (skewed ? "skewed_" : std::to_string(row_count) + "-rows_") + (core_count == 1 ? "st" : "mt") + ".csv";
 	ofstream.open(result_filename);
 	ofstream << "CONFIGURATION,ROW_COUNT,PARTITION_COUNT,RESULTS_PER_PARTITION,RESULT_COUNT,RUNTIME_NS\n";
 	ofstream << std::fixed;
 
 	const auto predicate_value = uint64_t{3};
-	for (const auto partition_count : partition_counts) {
-		if (partition_count >= row_count) {
-			break;
-		}
+	for (const auto& [run_row_count, partition_count, filename] : file_names) {
+		const auto num_runs = ((core_count == 1 && run_row_count > 100'000) || run_row_count > 1'000'000) ? 100 : 1'000;
 
-		const auto num_runs = ((core_count == 1 && row_count > 100'000) || row_count > 1'000'000) ? 100 : 1'000;
-
-		std::cout << row_count << " rows, " << partition_count << " partitions, " << num_runs << " runs\n";
+		std::cout << run_row_count << " rows, " << partition_count << " partitions, " << num_runs << " runs\n";
 		for (auto level_int = uint8_t{0}; level_int < 3; ++level_int) {
 			const auto level = static_cast<OptimizationLevel>(level_int);
 			const auto level_str = level_to_str(level);
 			con.BeginTransaction();
-			// con.Query("create table store_sales ( ss_sold_date_sk integer , ss_sold_time_sk integer , ss_item_sk integer not null, ss_customer_sk integer , ss_cdemo_sk integer , ss_hdemo_sk integer , ss_addr_sk integer , ss_store_sk integer , ss_promo_sk integer , ss_ticket_number integer not null, ss_quantity integer , ss_wholesale_cost decimal(7,2) , ss_list_price decimal(7,2) , ss_sales_price decimal(7,2) , ss_ext_discount_amt decimal(7,2) , ss_ext_sales_price decimal(7,2) , ss_ext_wholesale_cost decimal(7,2) , ss_ext_list_price decimal(7,2) , ss_ext_tax decimal(7,2) , ss_coupon_amt decimal(7,2) , ss_net_paid decimal(7,2) , ss_net_paid_inc_tax decimal(7,2) , ss_net_profit decimal(7,2) );");
-
-			// con.Query("COPY store_sales FROM 'store_sales_s1_ordered_100.csv' WITH (FORMAT CSV, DELIMITER ',', NULL '', QUOTE '\"');"); //->Print();
 			con.Query("create table eval (a int, b int, c int);");
-			const auto filename = table_file_name(partition_count, row_count);
 			con.Query("COPY eval FROM '" + filename + "' WITH (FORMAT CSV, DELIMITER ',', NULL '', QUOTE '\"');");
 			con.Commit();
-
-
-			// con.Query("select ss_store_sk, count(*), count(distinct ss_sold_date_sk) from store_sales group by ss_store_sk")->Print();
-
-			// std::cout << "== Row count ==\n";
-
-			// con.Query("SELECT count(*) from eval")->Print();
-			// con.Query("SELECT min(ss_item_sk), max(ss_item_sk) from store_sales")->Print();
-			// con.Query("SELECT count(distinct ss_sold_date_sk) from store_sales")->Print();
-			// con.Query("SELECT count(distinct ss_item_sk) from store_sales")->Print();
-
-			// string query = use_filter ?
-			//   "SELECT ss_item_sk, ss_sold_date_sk, rank() OVER (PARTITION BY ss_store_sk ORDER BY ss_sold_date_sk) rnk FROM store_sales where ss_item_sk < 4" :
-			//  "SELECT * FROM (SELECT ss_item_sk, ss_sold_date_sk, rank() OVER (PARTITION BY ss_store_sk ORDER BY ss_sold_date_sk) rnk FROM store_sales where ss_item_sk < 4) t WHERE rnk < 20";
-
-			//con.Query("select * from store_sales order by ss_store_sk, ss_sold_date_sk;")->Print();
-
-			// con.Query("select min(ss_item_sk), max(ss_item_sk), count(distinct ss_item_sk) from store_sales group by ss_store_sk;")->Print();
-			// con.Query("select min(ss_item_sk), max(ss_item_sk), count(distinct ss_item_sk) from store_sales where ss_item_sk < 10000  group by ss_store_sk;")->Print();
-
-			// std::exit(0);
-
-			// string query = WindowOperatorConfig::get().do_filter ?
-			//   "SELECT * from (select ss_store_sk, ss_sold_date_sk, rank() OVER (PARTITION BY ss_store_sk ORDER BY ss_sold_date_sk) rnk FROM store_sales where ss_item_sk < 10000) t" :
-			//  "SELECT * FROM (SELECT ss_store_sk, ss_sold_date_sk, rank() OVER (PARTITION BY ss_store_sk ORDER BY ss_sold_date_sk) rnk FROM store_sales where ss_item_sk < 10000) t";
 
 			const auto predicate_value = uint64_t{3};
 			WindowOperatorConfig::get().predicate_value = predicate_value;
@@ -179,9 +174,7 @@ int main(int argc, char* argv[]) {
 			 "SELECT * from (select a, b, rank() OVER (PARTITION BY a ORDER BY b) rnk FROM eval) t" :
 			  "SELECT * from (select a, b, rank() OVER (PARTITION BY a ORDER BY b) rnk FROM eval) t WHERE rnk <= " + std::to_string(predicate_value);
 
-			// std::cout << "== Run ==\n";
-
-			// auto result_count = con.Query(query)->RowCount();
+			// One warm-up run.
 			const auto init_result_count = con.Query(query)->RowCount();
 			auto result_count = init_result_count;
 			auto run_durations = std::vector<std::chrono::nanoseconds>(num_runs);
@@ -192,7 +185,6 @@ int main(int argc, char* argv[]) {
 				run_durations[run] = std::chrono::steady_clock::now() - run_start;
 			}
 
-
 			const auto duration = std::chrono::steady_clock::now() - start;
 			std::cout << "\t" << level_str << "\t" << result_count << "\t" <<  std::chrono::duration<double, std::milli>{duration}.count() << " ms\n";
 
@@ -200,27 +192,12 @@ int main(int argc, char* argv[]) {
 
 			for (const auto& duration : run_durations) {
 				//ofstream << "CONFIGURATION,ROW_COUNT,PARTITION_COUNT,RESULT_COUNT,RUNTIME_NS\n";
-				ofstream << level_str << "," << row_count << "," << partition_count << "," << predicate_value << "," << init_result_count << "," << duration.count() << "\n";
+				ofstream << level_str << "," << run_row_count << "," << partition_count << "," << predicate_value << "," << init_result_count << "," << duration.count() << "\n";
 			}
 
 			con.BeginTransaction();
 			con.Query("drop table eval;");
 			con.Commit();
-
-			// std::cout << "== Print ==\n";
-			// con.Query(query)->Print();
-			// con.Query("select min(cnt), max(cnt), avg(cnt), min(o_cnt), max(o_cnt), avg(o_cnt) from (SELECT count(*) cnt, count(distinct ss_sold_date_sk) o_cnt from store_sales group BY ss_item_sk) t")->Print();
-			//con.Query("SELECT * FROM (SELECT ss_item_sk, ss_sold_date_sk, rank() OVER (PARTITION BY ss_item_sk ORDER BY ss_sold_date_sk) rnk FROM store_sales) t WHERE rnk < 20")->Print();
-
-			// con.Query("select rnk, count(rnk) cnt from (SELECT ss_store_sk, ss_sold_date_sk, rank() OVER (PARTITION BY ss_store_sk ORDER BY ss_sold_date_sk) rnk FROM store_sales) t group by rnk order by cnt desc limit 20")->Print();
-
-			// con.Query("select ss_store_sk, max(rnk) from (SELECT ss_store_sk, ss_sold_date_sk, rank() OVER (PARTITION BY ss_store_sk ORDER BY ss_sold_date_sk) rnk FROM store_sales) t group by ss_store_sk order by ss_store_sk")->Print();
-
-			// con.Query("select ss_store_sk, count(*) cnt from store_sales group by ss_store_sk order by ss_store_sk")->Print();
-
-			//con.Query("select count(distinct rnk) from (SELECT ss_item_sk, ss_sold_date_sk, rank() OVER (PARTITION BY ss_store_sk ORDER BY ss_sold_date_sk) rnk FROM store_sales) t")->Print();
-
-			// con.Query("EXPLAIN ANALYZE " + query)->Print();
 		}
 		std::cout << "\n";
 	}
