@@ -41,13 +41,14 @@ bool fileExists(const std::string& filename) {
 std::string execute_command(const std::string& command) {
     std::array<char, 128> buffer;
     std::string result;
-    std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(command.c_str(), "r"), pclose);
+    auto* pipe = popen(command.c_str(), "r");
     if (!pipe) {
         throw std::runtime_error("popen() failed!");
     }
-    while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr) {
+    while (fgets(buffer.data(), buffer.size(), pipe) != nullptr) {
         result += buffer.data();
     }
+    pclose(pipe);
     return result;
 }
 
@@ -64,20 +65,20 @@ int main(int argc, char* argv[]) {
 			core_count = 1;
 		} else if (argument == "--skewed") {
 			skewed = true;
-		} else if (arg_id == 2) {
+		} else if (arg_id == 1) {
 			row_count = std::stoi(argument);
 		} else {
 			throw std::runtime_error("Unrecognized option: '" + argument + "'.");
 		}
 	}
 
-	std::cout << "Using " << core_count << " core(s); with" << (skewed ? "" : "out") << " skew\n";
 
 	auto* config = new DBConfig();
 	config->options.maximum_threads = core_count;
 	DuckDB db(nullptr, config);
 	// std::cout << db.NumberOfThreads() << "\n";
 	Connection con(db);
+	std::cout << "Using " << db.NumberOfThreads() << " core(s); with" << (skewed ? "" : "out") << " skew\n";
 	// con.SetAutoCommit(true);
 
 	const auto table_file_name = [&](auto p, auto r){
@@ -89,7 +90,7 @@ int main(int argc, char* argv[]) {
 	auto file_names = std::vector<std::tuple<size_t, size_t, std::string>>{};
 	if (!skewed) {
 		const auto partition_counts_base = size_t{10};
-		while (file_names.empty() || std::get<1>(file_names.back()) < row_count) {
+		while (file_names.empty() || std::get<1>(file_names.back()) < row_count / partition_counts_base) {
 			const auto partition_count = file_names.empty() ? partition_counts_base : std::get<1>(file_names.back()) * partition_counts_base;
 			const auto filename = table_file_name(partition_count, row_count);
 
@@ -115,14 +116,11 @@ int main(int argc, char* argv[]) {
 				continue;
 			}
 			const auto file_row_count = std::stoul(row_count_match[0].str().substr(0, row_count_match[0].length() - 5));
-			std::cout << file_row_count << " rows\n";
-
 			auto partition_count_match = std::smatch{};
 			if (!std::regex_search(filename, partition_count_match, std::regex{"\\d+-partitions"})) {
 				continue;
 			}
 			const auto partition_count = std::stoul(partition_count_match[0].str().substr(0, partition_count_match[0].length() - 11));
-			std::cout << partition_count << " partitions\n";
 			file_names.emplace_back(file_row_count, partition_count, "data/" + filename);
 		}
 
@@ -187,12 +185,9 @@ int main(int argc, char* argv[]) {
 
 			const auto duration = std::chrono::steady_clock::now() - start;
 			std::cout << "\t" << level_str << "\t" << result_count << "\t" <<  std::chrono::duration<double, std::milli>{duration}.count() << " ms\n";
-
-
-
-			for (const auto& duration : run_durations) {
+			for (const auto& run_duration : run_durations) {
 				//ofstream << "CONFIGURATION,ROW_COUNT,PARTITION_COUNT,RESULT_COUNT,RUNTIME_NS\n";
-				ofstream << level_str << "," << run_row_count << "," << partition_count << "," << predicate_value << "," << init_result_count << "," << duration.count() << "\n";
+				ofstream << level_str << "," << run_row_count << "," << partition_count << "," << predicate_value << "," << init_result_count << "," << run_duration.count() << "\n";
 			}
 
 			con.BeginTransaction();

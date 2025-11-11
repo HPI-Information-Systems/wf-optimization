@@ -31,23 +31,45 @@ bool fileExists(const std::string& filename) {
     return file.good();  // Returns true if the file exists and is accessible
 }
 
+std::string execute_command(const std::string& command) {
+    std::array<char, 128> buffer;
+    std::string result;
+    auto* pipe = popen(command.c_str(), "r");
+    if (!pipe) {
+        throw std::runtime_error("popen() failed!");
+    }
+    while (fgets(buffer.data(), buffer.size(), pipe) != nullptr) {
+        result += buffer.data();
+    }
+    pclose(pipe);
+    return result;
+}
+
 
 int main(int argc, char* argv[]) {
-	auto row_count = 100;
-	auto partition_count = 10;
+	auto row_count = size_t{100};
+	auto partition_count = size_t{10};
+	auto core_count = std::stoul(execute_command("nproc"));
 
-	if (argc >= 2) {
-		row_count = std::atoi(argv[1]);
+	for (auto arg_id = 1; arg_id < argc; ++arg_id) {
+		const auto argument = std::string{argv[arg_id]};
+		if (argument == "--st") {
+			core_count = 1;
+		} else if (arg_id == 1) {
+			row_count = std::stoul(argument);
+		} else if (arg_id == 2) {
+			partition_count = std::stoul(argument);
+		} else {
+			throw std::runtime_error("Unrecognized option: '" + argument + "'.");
+		}
 	}
-	if (argc >= 3) {
-		partition_count = std::atoi(argv[2]);
-	}
+
 	auto* config = new DBConfig();
-	config->options.maximum_threads = idx_t{1};;
+	config->options.maximum_threads = core_count;
 	DuckDB db(nullptr, config);
 	// DuckDB db(nullptr);
-	std::cout << db.NumberOfThreads() << "\n";
 	Connection con(db);
+	std::cout << "Using " << db.NumberOfThreads() << " core(s)\n";
 	// con.SetAutoCommit(true);
 
 
@@ -141,7 +163,7 @@ int main(int argc, char* argv[]) {
 		for (auto run = 0; run < num_runs; ++run) {
 			const auto result = con.Query(query);
 			result_count += result->RowCount();
-			result->Print();
+			// result->Print();
 		}
 
 		const auto duration = std::chrono::steady_clock::now() - start;

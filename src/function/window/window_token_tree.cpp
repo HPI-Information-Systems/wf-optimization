@@ -30,7 +30,7 @@ void WindowTokenTreeLocalState::BuildLeaves() {
 	const auto key_count = scan_cols.size();
 	WindowDeltaScanner(collection, block_begin, block_end, scan_cols, key_count,
 	                   [&](const idx_t row_idx, DataChunk &prev, DataChunk &curr, const idx_t ndistinct,
-	                       SelectionVector &distinct, const SelectionVector &matching) {
+	                       SelectionVector &distinct, const SelectionVector &matching, const idx_t curr_block) {
 		                   //	Same as previous - token delta is 0
 		                   const auto count = MinValue<idx_t>(prev.size(), curr.size());
 		                   const auto nmatch = count - ndistinct;

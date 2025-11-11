@@ -21,7 +21,7 @@ def main(cardinality, partitions, directory, skewed):
         assert cardinality > partitions, "Cardinality must be larger than number of partitions"
         rows_per_partition = [round(cardinality / partitions) for _ in range(partitions)]
     else:
-        skewness = 1.3
+        skewness = 1.2
 
         rand = np.random.default_rng(1717)
         distribution = rand.zipf(skewness, size=cardinality)
@@ -31,6 +31,11 @@ def main(cardinality, partitions, directory, skewed):
         rows_per_partition = [c for c in rows_per_partition.values()]
         rows_per_partition.sort(reverse=True)
         partitions = len(rows_per_partition)
+        # print(partitions)
+        # print(rows_per_partition[:10])
+        # print([i / cardinality for i in rows_per_partition[:10]])
+        # print(rows_per_partition[-10:])
+        # return
 
         # print("PDF")
         # zipf_pdf = [cardinality*(k**-skewness)/scipy.special.zeta(skewness) for k in range(1, partitions + 1)]

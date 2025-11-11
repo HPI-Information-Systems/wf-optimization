@@ -451,7 +451,7 @@ void WindowDistinctAggregatorLocalState::Sorted() {
 	//	8:	for i ← 1 to in.size do
 	WindowDeltaScanner(collection, block_begin, block_end, scan_cols, key_count,
 	                   [&](const idx_t row_idx, DataChunk &prev, DataChunk &curr, const idx_t ndistinct,
-	                       SelectionVector &distinct, const SelectionVector &matching) {
+	                       SelectionVector &distinct, const SelectionVector &matching, const idx_t curr_block) {
 		                   const auto count = MinValue<idx_t>(prev.size(), curr.size());
 
 		                   // The input index has probably been sliced.

@@ -58,6 +58,7 @@ public:
 
 	void AllocateMasks();
 	void ComputeMasks(const idx_t begin_idx, const idx_t end_idx);
+	void ComputeMasksSetBegins(const idx_t block_begin, const idx_t block_end);
 
 	ExecutorGlobalStates &GetGlobalStates(ClientContext &client);
 
@@ -176,9 +177,7 @@ public:
 	//! The output ordering batch index this hash group starts at
 	idx_t batch_base;
 
-	vector<idx_t> partition_begins;
-	mutex partition_begin_lock;
-	bool partition_begins_sorted{false};
+	vector<vector<idx_t>> partition_begins;
 };
 
 class WindowGlobalSinkState : public GlobalSinkState {
@@ -209,6 +208,9 @@ public:
 	Executors executors;
 	//! The shared expressions library
 	WindowSharedExpressions shared;
+
+	bool use_filter{false};
+	bool early_out{false};
 };
 
 //	Per-thread sink state
@@ -288,8 +290,8 @@ WindowGlobalSinkState::WindowGlobalSinkState(const PhysicalWindow &op, ClientCon
 	D_ASSERT(op.select_list[op.order_idx]->GetExpressionClass() == ExpressionClass::BOUND_WINDOW);
 	auto &wexpr = op.select_list[op.order_idx]->Cast<BoundWindowExpression>();
 
-	const auto use_filter = WindowOperatorConfig::get().do_filter ;
-	const auto early_out = WindowOperatorConfig::get().do_early_out;
+	use_filter = WindowOperatorConfig::get().do_filter;
+	early_out = WindowOperatorConfig::get().do_early_out;
 
 	const auto mode = DBConfig::GetSetting<DebugWindowModeSetting>(client);
 	for (idx_t expr_idx = 0; expr_idx < op.select_list.size(); ++expr_idx) {
@@ -502,6 +504,9 @@ WindowHashGroup::WindowHashGroup(WindowGlobalSinkState &gsink, HashGroupPtr &sor
 	if (rows) {
 		count = rows->Count();
 		blocks = rows->ChunkCount();
+		if (gsink.early_out) {
+			partition_begins.resize(blocks);
+		}
 	}
 
 	// Set up the collection for any fully materialised data
@@ -602,16 +607,13 @@ void WindowHashGroup::ComputeMasks(const idx_t block_begin, const idx_t block_en
 		keys.Initialize(collection.GetAllocator(), types);
 	}
 
-	auto mask_partition_begins = vector<idx_t>{};
-
 	WindowDeltaScanner(collection, block_begin, block_end, scan_cols, key_count,
 	                   [&](const idx_t row_idx, DataChunk &prev, DataChunk &curr, const idx_t ndistinct,
-	                       SelectionVector &distinct, const SelectionVector &matching) {
+	                       SelectionVector &distinct, const SelectionVector &matching, const idx_t curr_block) {
 		                   //	Process the partition boundaries
 		                   for (idx_t i = 0; i < ndistinct; ++i) {
 			                   const idx_t curr_index = row_idx + distinct.get_index(i);
 			                   partition_mask.SetValidUnsafe(curr_index);
-			                   mask_partition_begins.push_back(curr_index);
 			                   for (auto &order_mask : order_masks) {
 				                   order_mask.second.SetValidUnsafe(curr_index);
 			                   }
@@ -649,11 +651,105 @@ void WindowHashGroup::ComputeMasks(const idx_t block_begin, const idx_t block_en
 			                   }
 		                   }
 	                   });
+}
 
-	if (WindowOperatorConfig::get().do_early_out) {
-		const auto lock = lock_guard{partition_begin_lock};
-		partition_begins.insert(partition_begins.end(), mask_partition_begins.begin(), mask_partition_begins.end());
+void WindowHashGroup::ComputeMasksSetBegins(const idx_t block_begin, const idx_t block_end) {
+	D_ASSERT(count > 0);
+
+	// std::cout << "\nComputeMasks " << block_begin << "  " << block_end << "\n";
+
+	//	Initialise our range
+	AllocateMasks();
+	const auto begin_entry = partition_mask.EntryCount(block_begin * STANDARD_VECTOR_SIZE);
+	const auto end_entry = partition_mask.EntryCount(MinValue<idx_t>(block_end * STANDARD_VECTOR_SIZE, count));
+
+	//	If the data is unsorted, then the chunk sizes may be < STANDARD_VECTOR_SIZE,
+	//	and the entry range may be empty.
+	if (begin_entry >= end_entry) {
+		D_ASSERT(gsink.global_partition->sort_col_count == 0);
+		return;
 	}
+
+	partition_mask.SetRangeInvalid(count, begin_entry, end_entry);
+	if (!block_begin) {
+		partition_mask.SetValidUnsafe(0);
+	}
+	for (auto &order_mask : order_masks) {
+		order_mask.second.SetRangeInvalid(count, begin_entry, end_entry);
+		if (!block_begin) {
+			order_mask.second.SetValidUnsafe(0);
+		}
+	}
+
+	//	If we are not sorting, then only the partition boundaries are needed.
+	if (!gsink.global_partition->sort) {
+		return;
+	}
+
+	//	Set up the partition compare structs
+	auto &partitions = gsink.global_partition->partitions;
+	const auto key_count = partitions.size();
+
+	//	Set up the order data structures
+	auto &collection = *rows;
+	auto &scan_cols = gsink.global_partition->sort_ids;
+	WindowCollectionChunkScanner scanner(collection, scan_cols, block_begin);
+	unordered_map<idx_t, DataChunk> prefixes;
+	for (auto &order_mask : order_masks) {
+		D_ASSERT(order_mask.first >= partitions.size());
+		auto order_type = scanner.PrefixStructType(order_mask.first, partitions.size());
+		vector<LogicalType> types(2, order_type);
+		auto &keys = prefixes[order_mask.first];
+		// We can't use InitializeEmpty here because it doesn't set up all of the STRUCT internals...
+		keys.Initialize(collection.GetAllocator(), types);
+	}
+
+	WindowDeltaScanner(collection, block_begin, block_end, scan_cols, key_count,
+	                   [&](const idx_t row_idx, DataChunk &prev, DataChunk &curr, const idx_t ndistinct,
+	                       SelectionVector &distinct, const SelectionVector &matching, const idx_t curr_block) {
+		                   //	Process the partition boundaries
+		                   for (idx_t i = 0; i < ndistinct; ++i) {
+			                   const idx_t curr_index = row_idx + distinct.get_index(i);
+			                   partition_mask.SetValidUnsafe(curr_index);
+			                   // std::cout << "Add " << curr_index << "\n";
+			                   partition_begins[curr_block].push_back(curr_index);
+			                   for (auto &order_mask : order_masks) {
+				                   order_mask.second.SetValidUnsafe(curr_index);
+			                   }
+		                   }
+
+		                   //	Process the peers with each partition
+		                   const auto count = MinValue<idx_t>(prev.size(), curr.size());
+		                   const auto nmatch = count - ndistinct;
+		                   if (!nmatch) {
+			                   return;
+		                   }
+
+		                   for (auto &order_mask : order_masks) {
+			                   // If there are no order columns, then all the partition elements are peers and we are
+			                   // done
+			                   if (partitions.size() == order_mask.first) {
+				                   continue;
+			                   }
+			                   auto &prefix = prefixes[order_mask.first];
+			                   prefix.Reset();
+			                   auto &order_prev = prefix.data[0];
+			                   auto &order_curr = prefix.data[1];
+			                   scanner.ReferenceStructColumns(prev, order_prev, order_mask.first, partitions.size());
+			                   scanner.ReferenceStructColumns(curr, order_curr, order_mask.first, partitions.size());
+			                   if (ndistinct) {
+				                   prefix.Slice(matching, nmatch);
+			                   } else {
+				                   prefix.SetCardinality(nmatch);
+			                   }
+			                   const auto m = VectorOperations::DistinctFrom(order_curr, order_prev, nullptr, nmatch,
+			                                                                 &distinct, nullptr);
+			                   for (idx_t i = 0; i < m; ++i) {
+				                   const idx_t curr_index = row_idx + matching.get_index(distinct.get_index(i));
+				                   order_mask.second.SetValidUnsafe(curr_index);
+			                   }
+		                   }
+	                   });
 }
 
 // Per-thread scan state
@@ -731,11 +827,17 @@ void WindowLocalSourceState::Mask(ExecutionContext &context, InterruptState &int
 	D_ASSERT(task);
 	D_ASSERT(task->stage == WindowGroupStage::MASK);
 
-	window_hash_group->ComputeMasks(task->begin_idx, task->end_idx);
+
+	if (!gsource.early_out) {
+		window_hash_group->ComputeMasks(task->begin_idx, task->end_idx);
+	} else {
+		window_hash_group->ComputeMasksSetBegins(task->begin_idx, task->end_idx);
+	}
 
 	//	Mark this range as done
 	window_hash_group->masked += (task->end_idx - task->begin_idx);
 	task->begin_idx = task->end_idx;
+	// std::cout << "Masked group " + std::to_string(task->group_idx) + " begin " + std::to_string(task->begin_idx) + " end " + std::to_string(task->end_idx) + "\n";
 }
 
 WindowHashGroup::ExecutorGlobalStates &WindowHashGroup::GetGlobalStates(ClientContext &client) {
@@ -982,13 +1084,16 @@ void WindowLocalSourceState::ExecuteTask(ExecutionContext &context, DataChunk &r
 void WindowLocalSourceState::GetData(ExecutionContext &context, DataChunk &result, InterruptState &interrupt) {
 	D_ASSERT(window_hash_group->GetStage() == WindowGroupStage::GETDATA);
 
-	if (WindowOperatorConfig::get().do_early_out) {
-		const auto lock = lock_guard{window_hash_group->partition_begin_lock};
-		if (!window_hash_group->partition_begins_sorted) {
-			std::sort(window_hash_group->partition_begins.begin(), window_hash_group->partition_begins.end());
-			window_hash_group->partition_begins_sorted = true;
-		}
-	}
+	// if (WindowOperatorConfig::get().do_early_out) {
+	// 	const auto lock = lock_guard{window_hash_group->partition_begin_lock};
+	// 	if (!window_hash_group->partition_begins_sorted) {
+	// 		std::sort(window_hash_group->partition_begins.begin(), window_hash_group->partition_begins.end());
+	// 		window_hash_group->partition_begins_sorted = true;
+	// 	}
+	// }
+
+	D_ASSERT(!gsource.early_out || std::is_sorted(window_hash_group->partition_begins[task->begin_idx].cbegin(), window_hash_group->partition_begins[task->begin_idx].cend()));
+
 
 	// std::cout << "\nSource exec " << ++source_exec_id << "\n";
 	// std::cout << "\nWindowLocalSourceState::GetData "  << window_hash_group->count << " " << window_hash_group->blocks << "  "
@@ -1000,6 +1105,33 @@ void WindowLocalSourceState::GetData(ExecutionContext &context, DataChunk &resul
 	const auto position = scanner->Scanned();
 	auto &input_chunk = scanner->chunk;
 	scanner->Scan();
+
+	const auto print_vec = [](const auto& vec) {
+		auto stream = std::stringstream{};
+		stream << "{ ";
+		for (auto it = vec.cbegin(); it != vec.cend(); ++it) {
+			if (it != vec.begin()) {
+				stream << ", ";
+			}
+			stream << *it;
+		}
+		stream << " }";
+
+		return stream.str();
+	};
+
+	// if (gsource.early_out) {
+	// 	std::cout << "\nSource exec " + std::to_string(++source_exec_id) + ", group " + std::to_string(task->group_idx) + " partition begins: " + print_vec(window_hash_group->partition_begins[task->begin_idx]) + "\n";
+
+	// }
+
+	// if (gsource.early_out) {
+	// 	const auto& partition_begins = window_hash_group->partition_begins[task->begin_idx];
+	// 	if (!std::is_sorted(partition_begins.cbegin(), partition_begins.cend())) {
+	// 		throw std::runtime_error("Not sorted for " + std::to_string(position) + ":/");
+	// 	}
+	// 	std::cout << "Partition begins: " + print_vec(partition_begins) + "\n";
+	// }
 
 	const auto &executors = gsource.gsink.executors;
 	auto &gestates = window_hash_group->gestates;
@@ -1018,8 +1150,8 @@ void WindowLocalSourceState::GetData(ExecutionContext &context, DataChunk &resul
 		}
 		OperatorSinkInput sink {*gestates[expr_idx], *local_states[expr_idx], interrupt};
 		auto &lstate = local_states[expr_idx]->Cast<WindowExecutorLocalState>();
-		if (WindowOperatorConfig::get().do_early_out) {
-			lstate.partition_begins = window_hash_group->partition_begins;
+		if (gsource.early_out) {
+			lstate.partition_begins = window_hash_group->partition_begins[task->begin_idx];
 		}
 		executor.Evaluate(context, position, eval_chunk, result, sink);
 		if (lstate.has_filter) {

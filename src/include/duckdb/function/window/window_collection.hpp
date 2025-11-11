@@ -276,7 +276,7 @@ static void WindowDeltaScanner(ColumnDataCollection &collection, idx_t block_beg
 		//	If n is 0, neither SV has been filled in?
 		auto match_sel = ndistinct ? &matching : FlatVector::IncrementalSelectionVector();
 
-		operation(row_idx, *prev, *curr, ndistinct, distinct, *match_sel);
+		operation(row_idx, *prev, *curr, ndistinct, distinct, *match_sel, block_curr);
 
 		//	Transition between comparison ranges.
 		boundary_compare = !boundary_compare;
