@@ -153,7 +153,13 @@ int main(int argc, char* argv[]) {
 
 	const auto predicate_value = uint64_t{3};
 	for (const auto& [run_row_count, partition_count, filename] : file_names) {
-		const auto num_runs = ((core_count == 1 && run_row_count > 100'000) || run_row_count > 1'000'000) ? 100 : 1'000;
+		auto num_runs = 1'000;
+		if ((core_count == 1 && run_row_count > 100'000) || run_row_count > 1'000'000) {
+			num_runs = 100;
+		}
+		if (core_count == 1 && run_row_count > 10'000'000) {
+			num_runs = 10;
+		}
 
 		std::cout << run_row_count << " rows, " << partition_count << " partitions, " << num_runs << " runs\n";
 		for (auto level_int = uint8_t{0}; level_int < 3; ++level_int) {

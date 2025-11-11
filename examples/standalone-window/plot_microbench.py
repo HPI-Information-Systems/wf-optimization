@@ -21,9 +21,9 @@ def parse_args():
 
 
 def format_number(n):
-    if n < 1:
-        return str(round(n, 1))
-    return f"{int(n):,.0f}".replace(",", r"\thinspace") if n % 1 == 0 else str(n)
+    # if n < 10:
+    #     return str(round(n, 1))
+    return f"{int(n):,.0f}".replace(",", r"\thinspace") if n % 1 == 0 else f"{round(n, 1):,.1f}".replace(",", r"\thinspace")
 
 
 def to_s(lst):
@@ -102,9 +102,15 @@ def main(input_file):
     base_palette = Safe_10.hex_colors
     runtimes["RUNTIME_MS"] = runtimes["RUNTIME_NS"] / 10**6
     runtimes.rename(columns={'CONFIGURATION': 'Configuration'}, inplace=True)
+    print("MIN")
     print(runtimes.groupby(by=["PARTITION_COUNT", "Configuration"]).RUNTIME_MS.min())
+    print("MEAN")
+    print(runtimes.groupby(by=["PARTITION_COUNT", "Configuration"]).RUNTIME_MS.mean())
+    print("MEDIAN")
+    print(runtimes.groupby(by=["PARTITION_COUNT", "Configuration"]).RUNTIME_MS.median())
+
     runtimes = runtimes.groupby(by=["PARTITION_COUNT", "Configuration"]).RUNTIME_MS.median().reset_index()
-    print(runtimes)
+
     # print(runtimes.describe())
     print(runtimes.PARTITION_COUNT.unique())
     order = ["Default", "Filter", "EarlyOut", "SkipSort"][:len(runtimes.Configuration.unique())]
