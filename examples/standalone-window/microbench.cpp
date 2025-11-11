@@ -110,17 +110,19 @@ int main(int argc, char* argv[]) {
 			if (filename.find("_skewed") == std::string::npos) {
 				continue;
 			}
-			std::cout << filename << "\n";
+
 			auto row_count_match = std::smatch{};
 			if (!std::regex_search(filename, row_count_match, std::regex{"\\d+-rows"})) {
 				continue;
 			}
 			const auto file_row_count = std::stoul(row_count_match[0].str().substr(0, row_count_match[0].length() - 5));
+
 			auto partition_count_match = std::smatch{};
 			if (!std::regex_search(filename, partition_count_match, std::regex{"\\d+-partitions"})) {
 				continue;
 			}
 			const auto partition_count = std::stoul(partition_count_match[0].str().substr(0, partition_count_match[0].length() - 11));
+
 			file_names.emplace_back(file_row_count, partition_count, "data/" + filename);
 		}
 

@@ -1151,7 +1151,7 @@ void WindowLocalSourceState::GetData(ExecutionContext &context, DataChunk &resul
 		OperatorSinkInput sink {*gestates[expr_idx], *local_states[expr_idx], interrupt};
 		auto &lstate = local_states[expr_idx]->Cast<WindowExecutorLocalState>();
 		if (gsource.early_out) {
-			lstate.partition_begins = window_hash_group->partition_begins[task->begin_idx];
+			lstate.partition_begins = &(window_hash_group->partition_begins[task->begin_idx]);
 		}
 		executor.Evaluate(context, position, eval_chunk, result, sink);
 		if (lstate.has_filter) {

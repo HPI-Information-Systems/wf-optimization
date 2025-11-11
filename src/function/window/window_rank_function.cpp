@@ -220,11 +220,11 @@ void WindowRankExecutor<Comparator, early_out>::EvaluateInternal(ExecutionContex
 	auto peer_begin = FlatVector::GetData<const idx_t>(lpeer.bounds.data[PEER_BEGIN]);
 	lpeer.rank = (peer_begin[0] - partition_begin[0]) + 1;
 	lpeer.rank_equal = (row_idx - peer_begin[0]);
-	auto next_partition_begin = lpeer.partition_begins.cbegin();
+	auto next_partition_begin = lpeer.partition_begins ? lpeer.partition_begins->cbegin() : vector<idx_t>::const_iterator{};
 
 	if constexpr (early_out) {
-		while (next_partition_begin != lpeer.partition_begins.cend() && *next_partition_begin <= row_idx) {
-			++next_partition_begin;
+		while (next_partition_begin != lpeer.partition_begins->cend() && *next_partition_begin <= row_idx) {
+			++(next_partition_begin);
 		}
 	}
 
@@ -274,7 +274,7 @@ void WindowRankExecutor<Comparator, early_out>::EvaluateInternal(ExecutionContex
 			if constexpr (early_out) {
 				//const auto partition_end = FlatVector::GetData<const idx_t>(lpeer.bounds.data[PARTITION_END])[i];
 				// std::cout << "\t\tset i=" << i << "  row_idx=" << row_idx << "\n";
-				if (next_partition_begin == lpeer.partition_begins.cend()) {
+				if (next_partition_begin == lpeer.partition_begins->cend()) {
 					break;
 				}
 				const auto partition_end = *next_partition_begin;
