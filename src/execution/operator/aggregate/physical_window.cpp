@@ -177,7 +177,7 @@ public:
 	//! The output ordering batch index this hash group starts at
 	idx_t batch_base;
 
-	vector<vector<idx_t>> partition_begins;
+	unsafe_vector<unsafe_vector<idx_t>> partition_begins;
 };
 
 class WindowGlobalSinkState : public GlobalSinkState {
@@ -430,15 +430,18 @@ WindowGlobalSourceState::WindowGlobalSourceState(ClientContext &client, WindowGl
 	auto &hash_groups = global_partition.GetHashGroups(*hashed_source);
 	window_hash_groups.resize(hash_groups.size());
 
-	// std::cout << "init WindowGlobalSourceState: " << hash_groups.size() << " " << window_hash_groups.size() << " hash groups\n";
+	// std::cout << "init WindowGlobalSourceState: " + std::to_string(hash_groups.size()) + " hash groups\n";
 
 	use_filter = WindowOperatorConfig::get().do_filter;
 	early_out = WindowOperatorConfig::get().do_early_out;
+	// auto group_count = 0;
 	for (idx_t group_idx = 0; group_idx < hash_groups.size(); ++group_idx) {
 		auto rows = std::move(hash_groups[group_idx]);
 		if (!rows) {
 			continue;
 		}
+		// ++group_count;
+		// std::cout << "Group " + std::to_string(group_count) + " " + std::to_string(rows->Count()) + " rows\n";
 
 		auto window_hash_group = make_uniq<WindowHashGroup>(gsink, rows, group_idx);
 		const auto block_count = window_hash_group->rows->ChunkCount();

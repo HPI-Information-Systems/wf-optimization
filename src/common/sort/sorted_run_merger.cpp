@@ -9,6 +9,8 @@
 #include "vergesort.h"
 #include "pdqsort.h"
 
+#include <iostream>
+
 namespace duckdb {
 
 //===--------------------------------------------------------------------===//
@@ -649,7 +651,11 @@ void SortedRunMergerLocalState::TemplatedMergePartition(SortedRunMergerGlobalSta
 		}
 	}
 
+		// auto msg = std::stringstream{};
+		// msg << "SortedRunMergerLocalState::TemplatedMergePartition: " + std::to_string(active_runs) + " runs, " + std::to_string(merged_partition_count) + " rows";
+
 	if (active_runs == 1 || gstate.merger.is_index_sort) {
+			// std::cout << msg.str() + " (skip sort)\n";
 		return; // Only one active run, no need to sort (or index sort, which is approximate sorting)
 	}
 
@@ -659,6 +665,8 @@ void SortedRunMergerLocalState::TemplatedMergePartition(SortedRunMergerGlobalSta
 	};
 	duckdb_vergesort::vergesort(merged_partition_keys, merged_partition_keys + merged_partition_count,
 	                            std::less<SORT_KEY>(), fallback);
+
+	// std::cout << msg.str() + " (sort)\n";
 }
 
 void SortedRunMergerLocalState::ScanPartition(SortedRunMergerGlobalState &gstate, DataChunk &chunk) {
@@ -691,6 +699,8 @@ template <SortKeyType SORT_KEY_TYPE>
 void SortedRunMergerLocalState::TemplatedScanPartition(SortedRunMergerGlobalState &gstate, DataChunk &chunk) {
 	using SORT_KEY = SortKey<SORT_KEY_TYPE>;
 	const auto count = MinValue<idx_t>(merged_partition_count - merged_partition_index, STANDARD_VECTOR_SIZE);
+
+	//std::cout << "SortedRunMergerLocalState::TemplatedScanPartition\n";
 
 	// Grab pointers to sort keys
 	const auto merged_partition_keys = reinterpret_cast<SORT_KEY *>(merged_partition.get()) + merged_partition_index;

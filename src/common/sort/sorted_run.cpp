@@ -2,11 +2,14 @@
 
 #include "duckdb/common/types/row/tuple_data_collection.hpp"
 #include "duckdb/common/sorting/sort.hpp"
+#include "duckdb/common/radix.hpp"
 #include "duckdb/common/sorting/sort_key.hpp"
 #include "duckdb/common/types/row/block_iterator.hpp"
 
 #include "vergesort.h"
 #include "ska_sort.hpp"
+
+#include <iostream>
 
 namespace duckdb {
 
@@ -98,6 +101,8 @@ template <SortKeyType SORT_KEY_TYPE>
 void SortedRunScanState::TemplatedScan(const SortedRun &sorted_run, const Vector &sort_key_pointers, const idx_t &count,
                                        DataChunk &chunk) {
 	using SORT_KEY = SortKey<SORT_KEY_TYPE>;
+
+	// std::cout << "SortedRunScanState::TemplatedScan " << (sorted_run.pos_list ? std::string("with") : std::string("without")) <<  " PosList \n";
 
 	const auto &output_projection_columns = sort.output_projection_columns;
 	idx_t opc_idx = 0;
@@ -250,6 +255,16 @@ struct SkaExtractKey {
 	atomic<bool> &interrupted;
 };
 
+template <idx_t REMAINING>
+void PrintSortKey(const uint64_t *const &lhs, std::ostream& stream) {
+	constexpr auto remainder = REMAINING - 1;
+	stream << Radix::DecodeData<int64_t>(const_data_ptr_cast(lhs));
+	if constexpr (remainder >= 1) {
+		stream << ".";
+		PrintSortKey<remainder>(lhs + 1, stream);
+	}
+}
+
 template <SortKeyType SORT_KEY_TYPE>
 static void TemplatedSort(ClientContext &context, const TupleDataCollection &key_data, const bool is_index_sort) {
 	const auto &layout = key_data.GetLayout();
@@ -300,6 +315,133 @@ static void SortSwitch(ClientContext &context, const TupleDataCollection &key_da
 		return TemplatedSort<SortKeyType::PAYLOAD_FIXED_32>(context, key_data, is_index_sort);
 	case SortKeyType::PAYLOAD_VARIABLE_32:
 		return TemplatedSort<SortKeyType::PAYLOAD_VARIABLE_32>(context, key_data, is_index_sort);
+	default:
+		throw NotImplementedException("TemplatedSort for %s", EnumUtil::ToString(sort_key_type));
+	}
+}
+
+template <SortKeyType SORT_KEY_TYPE>
+static void TemplatedSort(ClientContext &context, const TupleDataCollection &key_data, const bool is_index_sort, std::optional<unsafe_vector<idx_t>>& pos_list) {
+	const auto &layout = key_data.GetLayout();
+	D_ASSERT(SORT_KEY_TYPE == layout.GetSortKeyType());
+	using SORT_KEY = SortKey<SORT_KEY_TYPE>;
+	using BLOCK_ITERATOR_STATE = BlockIteratorState<BlockIteratorStateType::IN_MEMORY>;
+	using BLOCK_ITERATOR = block_iterator_t<const BLOCK_ITERATOR_STATE, SORT_KEY>;
+
+	const BLOCK_ITERATOR_STATE state(key_data);
+	auto begin = BLOCK_ITERATOR(state, 0);
+	auto end = BLOCK_ITERATOR(state, key_data.Count());
+
+	const auto requires_next_sort =
+	    is_index_sort ? false : !SORT_KEY::CONSTANT_SIZE || SORT_KEY::INLINE_LENGTH != sizeof(uint64_t);
+	const auto ska_sort_width = MinValue<idx_t>(layout.GetSortWidth(), sizeof(uint64_t));
+	const auto &sort_skippable_bytes = layout.GetSortSkippableBytes();
+	auto ska_extract_key =
+	    SkaExtractKey<SORT_KEY>(requires_next_sort, ska_sort_width, sort_skippable_bytes, context.interrupted);
+
+	const auto print_vec = [](const auto& vec) {
+		auto stream = std::stringstream{};
+		stream << "{ ";
+		for (auto it = vec.cbegin(); it != vec.cend(); ++it) {
+			if (it != vec.begin()) {
+				stream << ", ";
+			}
+			stream << *it;
+		}
+		stream << " }";
+
+		return stream.str();
+	};
+
+	// auto msg = std::stringstream{};
+	// msg << "SortedRun::TemplatedSort\n" << key_data.Count() << " rows, " << print_vec(sort_skippable_bytes) << " skippable bytes, " << ska_sort_width << " sort width, " << std::to_string(static_cast<uint8_t>(SORT_KEY_TYPE)) << " type, requires next sort " << std::boolalpha << requires_next_sort << " " << (!SORT_KEY::CONSTANT_SIZE) << "  " << (SORT_KEY::INLINE_LENGTH != sizeof(uint64_t)) << "\n";
+	// msg << "Key Data: " << const_cast<TupleDataCollection&>(key_data).ToString() << "\n";
+
+	// const auto print_keys = [&](){
+	// 	auto my_msg = std::stringstream{};
+	// 	my_msg << "{ ";
+	// 	for (auto it = begin; it != end; ++it) {
+	// 		if (it != begin) {
+	// 			my_msg << ", ";
+	// 		}
+	// 		PrintSortKey<SORT_KEY::PARTS>(&(it->part0), my_msg);
+	// 	}
+	// 	my_msg << " }";
+	// 	return my_msg.str();
+	// };
+
+	// msg << "Before: " << print_keys() << "\n";
+
+	const auto fallback = [ska_extract_key](const BLOCK_ITERATOR &fb_begin, const BLOCK_ITERATOR &fb_end) {
+		duckdb_ska_sort::ska_sort(fb_begin, fb_end, ska_extract_key);
+	};
+	duckdb_vergesort::vergesort(begin, end, std::less<SORT_KEY>(), fallback);
+
+	auto offsets = unsafe_vector<idx_t>{};
+	if constexpr (SORT_KEY_TYPE == SortKeyType::NO_PAYLOAD_FIXED_16) {
+		pos_list.emplace();
+		pos_list->reserve(key_data.Count());
+		const auto predicate = WindowOperatorConfig::get().predicate_value;
+
+
+		auto partition = begin->part0;
+		auto order_by = begin->part1;
+		auto order_by_count = idx_t{1};
+		auto i = idx_t{0};
+		auto last_match = idx_t{0};
+		for (auto it = begin + 1; it != end; ++it, ++i) {
+			if (it->part0 != partition) {
+				partition = it->part0;
+				order_by = it->part1;
+				order_by_count = 1;
+				pos_list->push_back(i);
+				offsets.push_back(i - last_match);
+				last_match = i;
+				continue;
+			}
+
+			if (it->part0 != order_by && order_by_count <= predicate) {
+				++order_by_count;
+				pos_list->push_back(i);
+				offsets.push_back(i - last_match);
+				last_match = i;
+				continue;
+			}
+		}
+	}
+
+	// msg << "PosList: " << print_vec(*pos_list) << "\n";
+	// msg << "Offsets: " << print_vec(offsets) << "\n";
+
+	// msg << "After: " << print_keys() << "\n";
+	// std::cout << msg.str();
+
+	if (context.interrupted.load(std::memory_order_relaxed)) {
+		throw InterruptException();
+	}
+}
+
+static void SortSwitch(ClientContext &context, const TupleDataCollection &key_data, bool is_index_sort, std::optional<unsafe_vector<idx_t>>& pos_list) {
+	const auto sort_key_type = key_data.GetLayout().GetSortKeyType();
+	switch (sort_key_type) {
+	case SortKeyType::NO_PAYLOAD_FIXED_8:
+		return TemplatedSort<SortKeyType::NO_PAYLOAD_FIXED_8>(context, key_data, is_index_sort, pos_list);
+	case SortKeyType::NO_PAYLOAD_FIXED_16:
+		return TemplatedSort<SortKeyType::NO_PAYLOAD_FIXED_16>(context, key_data, is_index_sort, pos_list);
+	case SortKeyType::NO_PAYLOAD_FIXED_24:
+		return TemplatedSort<SortKeyType::NO_PAYLOAD_FIXED_24>(context, key_data, is_index_sort, pos_list);
+	case SortKeyType::NO_PAYLOAD_FIXED_32:
+		return TemplatedSort<SortKeyType::NO_PAYLOAD_FIXED_32>(context, key_data, is_index_sort, pos_list);
+	case SortKeyType::NO_PAYLOAD_VARIABLE_32:
+		return TemplatedSort<SortKeyType::NO_PAYLOAD_VARIABLE_32>(context, key_data, is_index_sort, pos_list);
+	case SortKeyType::PAYLOAD_FIXED_16:
+		return TemplatedSort<SortKeyType::PAYLOAD_FIXED_16>(context, key_data, is_index_sort, pos_list);
+	case SortKeyType::PAYLOAD_FIXED_24:
+		return TemplatedSort<SortKeyType::PAYLOAD_FIXED_24>(context, key_data, is_index_sort, pos_list);
+	case SortKeyType::PAYLOAD_FIXED_32:
+		return TemplatedSort<SortKeyType::PAYLOAD_FIXED_32>(context, key_data, is_index_sort, pos_list);
+	case SortKeyType::PAYLOAD_VARIABLE_32:
+		return TemplatedSort<SortKeyType::PAYLOAD_VARIABLE_32>(context, key_data, is_index_sort, pos_list);
 	default:
 		throw NotImplementedException("TemplatedSort for %s", EnumUtil::ToString(sort_key_type));
 	}
@@ -434,6 +576,8 @@ static void Reorder(ClientContext &context, unique_ptr<TupleDataCollection> &key
 void SortedRun::Finalize(bool external) {
 	D_ASSERT(!finalized);
 
+	// std::cout << "SortedRun::Finalize " + (external ? std::string("external") : std::string("internal")) + "\n";
+
 	// Finalize the append
 	key_data->FinalizePinState(key_append_state.pin_state);
 	key_data->VerifyEverythingPinned();
@@ -444,7 +588,11 @@ void SortedRun::Finalize(bool external) {
 	}
 
 	// Sort the fixed-size portion of the keys
-	SortSwitch(context, *key_data, is_index_sort);
+	if (WindowOperatorConfig::get().shrink_runs) {
+		SortSwitch(context, *key_data, is_index_sort, pos_list);
+	} else {
+		SortSwitch(context, *key_data, is_index_sort);
+	}
 
 	if (external) {
 		// Reorder variable-size portion of keys and/or payload data (if necessary)
@@ -474,6 +622,7 @@ void SortedRun::DestroyData(const idx_t tuple_idx_begin, const idx_t tuple_idx_e
 }
 
 idx_t SortedRun::Count() const {
+	// return pos_list ? pos_list->size() : key_data->Count();
 	return key_data->Count();
 }
 

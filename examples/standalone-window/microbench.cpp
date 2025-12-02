@@ -30,8 +30,6 @@
 
 using namespace duckdb;
 
-enum class OptimizationLevel : uint8_t { None, Filter, EarlyOut, SkipSort };
-
 
 bool fileExists(const std::string& filename) {
     std::ifstream file(filename);
@@ -57,7 +55,7 @@ int main(int argc, char* argv[]) {
 	auto row_count = size_t{1'000'000};
 	auto core_count = std::stoul(execute_command("nproc"));
 	auto skewed = false;
-
+	auto experimental = false;
 
 	for (auto arg_id = 1; arg_id < argc; ++arg_id) {
 		const auto argument = std::string{argv[arg_id]};
@@ -65,6 +63,8 @@ int main(int argc, char* argv[]) {
 			core_count = 1;
 		} else if (argument == "--skewed") {
 			skewed = true;
+		} else if (argument == "--experimental") {
+			experimental = true;
 		} else if (arg_id == 1) {
 			row_count = std::stoi(argument);
 		} else {
@@ -131,20 +131,6 @@ int main(int argc, char* argv[]) {
 		});
 	}
 
-	const auto level_to_str = [](const auto level) {
-		switch (level) {
-			case OptimizationLevel::None:
-				return "Default";
-			case OptimizationLevel::Filter:
-				return "Filter";
-			case OptimizationLevel::EarlyOut:
-				return "EarlyOut";
-			case OptimizationLevel::SkipSort:
-				return "SkipSort";
-		}
-		throw std::runtime_error("GCC thinks this is reachable.");
-	};
-
 	auto ofstream = std::ofstream{};
 	const auto result_filename = "microbenchmark_" + (skewed ? "skewed_" : std::to_string(row_count) + "-rows_") + (core_count == 1 ? "st" : "mt") + ".csv";
 	ofstream.open(result_filename);
@@ -162,19 +148,34 @@ int main(int argc, char* argv[]) {
 		}
 
 		std::cout << run_row_count << " rows, " << partition_count << " partitions, " << num_runs << " runs\n";
-		for (auto level_int = uint8_t{0}; level_int < 3; ++level_int) {
-			const auto level = static_cast<OptimizationLevel>(level_int);
-			const auto level_str = level_to_str(level);
-			con.BeginTransaction();
-			con.Query("create table eval (a int, b int, c int);");
-			con.Query("COPY eval FROM '" + filename + "' WITH (FORMAT CSV, DELIMITER ',', NULL '', QUOTE '\"');");
-			con.Commit();
+		auto level_lower = uint8_t{0};
+		auto level_upper = static_cast<uint8_t>(WindowOperatorConfig::OptimizationLevel::EarlyOut);
+
+		if (experimental) {
+			level_upper = static_cast<uint8_t>(WindowOperatorConfig::OptimizationLevel::ShrinkPartitions);
+		}
+
+		con.BeginTransaction();
+		con.Query("create table eval (a int, b int, c int);");
+		con.Query("COPY eval FROM '" + filename + "' WITH (FORMAT CSV, DELIMITER ',', NULL '', QUOTE '\"');");
+		con.Commit();
+
+		for (auto level_int = level_lower; level_int <= level_upper; ++level_int) {
+			const auto level = static_cast<WindowOperatorConfig::OptimizationLevel>(level_int);
+
+			if (level == WindowOperatorConfig::OptimizationLevel::ShrinkRuns) {
+				continue;
+			}
+			const auto level_str = WindowOperatorConfig::optimization_level_to_str(level);
 
 			const auto predicate_value = uint64_t{3};
 			WindowOperatorConfig::get().predicate_value = predicate_value;
-			WindowOperatorConfig::get().do_filter = level != OptimizationLevel::None;
-			WindowOperatorConfig::get().do_early_out = level == OptimizationLevel::EarlyOut;
-			WindowOperatorConfig::get().skip_sort = level == OptimizationLevel::SkipSort;
+			WindowOperatorConfig::get().do_filter = level == WindowOperatorConfig::OptimizationLevel::Filter || level == WindowOperatorConfig::OptimizationLevel::EarlyOut;
+			WindowOperatorConfig::get().do_early_out = level == WindowOperatorConfig::OptimizationLevel::EarlyOut;
+			WindowOperatorConfig::get().shrink_runs = level == WindowOperatorConfig::OptimizationLevel::ShrinkRuns;
+			WindowOperatorConfig::get().simulate_shrink_partitions = level == WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsSimulated;
+			WindowOperatorConfig::get().shrink_partitions = level == WindowOperatorConfig::OptimizationLevel::ShrinkPartitions;
+			WindowOperatorConfig::get().expected_partitions = partition_count;
 
 			string query = WindowOperatorConfig::get().do_filter ?
 			 "SELECT * from (select a, b, rank() OVER (PARTITION BY a ORDER BY b) rnk FROM eval) t" :
@@ -197,11 +198,11 @@ int main(int argc, char* argv[]) {
 				//ofstream << "CONFIGURATION,ROW_COUNT,PARTITION_COUNT,RESULT_COUNT,RUNTIME_NS\n";
 				ofstream << level_str << "," << run_row_count << "," << partition_count << "," << predicate_value << "," << init_result_count << "," << run_duration.count() << "\n";
 			}
-
-			con.BeginTransaction();
-			con.Query("drop table eval;");
-			con.Commit();
 		}
+
+		con.BeginTransaction();
+		con.Query("drop table eval;");
+		con.Commit();
 		std::cout << "\n";
 	}
 

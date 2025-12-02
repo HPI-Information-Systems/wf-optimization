@@ -77,6 +77,8 @@ public:
 
 	//! Whether this run has been finalized
 	bool finalized;
+
+	std::optional<unsafe_vector<idx_t>> pos_list;
 };
 
 } // namespace duckdb

@@ -220,7 +220,7 @@ void WindowRankExecutor<Comparator, early_out>::EvaluateInternal(ExecutionContex
 	auto peer_begin = FlatVector::GetData<const idx_t>(lpeer.bounds.data[PEER_BEGIN]);
 	lpeer.rank = (peer_begin[0] - partition_begin[0]) + 1;
 	lpeer.rank_equal = (row_idx - peer_begin[0]);
-	auto next_partition_begin = lpeer.partition_begins ? lpeer.partition_begins->cbegin() : vector<idx_t>::const_iterator{};
+	auto next_partition_begin = early_out ? lpeer.partition_begins->cbegin() : unsafe_vector<idx_t>::const_iterator{};
 
 	if constexpr (early_out) {
 		while (next_partition_begin != lpeer.partition_begins->cend() && *next_partition_begin <= row_idx) {

@@ -14,9 +14,10 @@ def parse_args():
     parser.add_argument("--partitions", "-p", type=int, default=100)
     parser.add_argument("--directory", "-d", type=str, default="data")
     parser.add_argument("--skewed", "-s", action="store_true", default=False)
+    parser.add_argument("--randomize", "-r", action="store_true", default=False)
     return parser.parse_args()
 
-def main(cardinality, partitions, directory, skewed):
+def main(cardinality, partitions, directory, skewed, randomize):
     if not skewed:
         assert cardinality > partitions, "Cardinality must be larger than number of partitions"
         rows_per_partition = [round(cardinality / partitions) for _ in range(partitions)]
@@ -64,19 +65,26 @@ def main(cardinality, partitions, directory, skewed):
         # print(sum([1 for i in rows_per_partition if i > 0]))
         # print(sum([1 for i in rows_per_partition if i > 1]))
 
+    partition_values = range(partitions)
+    if randomize:
+        partition_values = random.Random(17).sample(range(2**30, 2**31), k=partitions)
+
+    print(partition_values)
+
+
     tuples = []
-    for partition, count in zip(range(partitions), rows_per_partition):
+    for partition, count in zip(partition_values, rows_per_partition):
         for row in range(count):
             tuples.append((partition, row))
 
     random.Random(17).shuffle(tuples)
 
     os.makedirs(directory, exist_ok=True)
-    file_name = f"synthetic_{cardinality}-rows_{partitions}-partitions{'_skewed' if skewed else ''}.csv"
+    file_name = f"synthetic_{cardinality}-rows_{partitions}-partitions{'_skewed' if skewed else ''}{'_randomized' if randomize else ''}.csv"
     with open(os.path.join(directory, file_name), "w") as f:
         for a, b in tuples:
             f.write(f"{a},{b},{b}\n")
 
 if __name__ == '__main__':
     args = parse_args()
-    main(args.cardinality, args.partitions, args.directory, args.skewed)
+    main(args.cardinality, args.partitions, args.directory, args.skewed, args.randomize)
