@@ -714,7 +714,6 @@ void WindowHashGroup::ComputeMasksSetBegins(const idx_t block_begin, const idx_t
 		                   for (idx_t i = 0; i < ndistinct; ++i) {
 			                   const idx_t curr_index = row_idx + distinct.get_index(i);
 			                   partition_mask.SetValidUnsafe(curr_index);
-			                   // std::cout << "Add " << curr_index << "\n";
 			                   partition_begins[curr_block].push_back(curr_index);
 			                   for (auto &order_mask : order_masks) {
 				                   order_mask.second.SetValidUnsafe(curr_index);
