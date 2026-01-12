@@ -256,10 +256,10 @@ static unique_ptr<WindowExecutor> WindowExecutorFactory(BoundWindowExpression &w
 		return make_uniq<WindowDenseRankExecutor>(wexpr, shared);
 	case ExpressionType::WINDOW_RANK:
 		if (early_out) {
-			return make_uniq<WindowRankExecutor<std::less_equal<uint64_t>, true>>(wexpr, shared);
+			return make_uniq<WindowRankExecutor<std::less_equal<int64_t>, true>>(wexpr, shared);
 		}
 		if (use_filter) {
-			return make_uniq<WindowRankExecutor<std::less_equal<uint64_t>, false>>(wexpr, shared);
+			return make_uniq<WindowRankExecutor<std::less_equal<int64_t>, false>>(wexpr, shared);
 		}
 		return make_uniq<WindowRankExecutor<NoneComparator, false>>(wexpr, shared);
 	case ExpressionType::WINDOW_PERCENT_RANK:

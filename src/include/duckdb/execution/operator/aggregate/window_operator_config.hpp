@@ -23,7 +23,7 @@ class WindowOperatorConfig {
   bool shrink_runs{false};
   bool shrink_partitions{false};
   bool simulate_shrink_partitions{false};
-  uint64_t predicate_value{0};
+  int64_t predicate_value{0};
   uint64_t expected_partitions{0};
 
   friend std::ostream& operator<<(std::ostream& stream, WindowOperatorConfig::OptimizationLevel level) {

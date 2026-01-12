@@ -123,7 +123,7 @@ HashedSortGlobalSinkState::HashedSortGlobalSinkState(ClientContext &client, cons
 		}
 	}
 
-	predicate_value = WindowOperatorConfig::get().predicate_value;
+	predicate_value = static_cast<uint64_t>(WindowOperatorConfig::get().predicate_value);
 	shrink_partitions = WindowOperatorConfig::get().shrink_partitions;
 }
 
@@ -535,7 +535,7 @@ SinkResultType HashedSort::Sink(ExecutionContext &context, DataChunk &input_chun
 
 	auto &local_grouping = lstate.local_grouping;
 	auto &grouping_append = lstate.grouping_append;
-	const auto old_radix_bits = local_grouping ? local_grouping->GetRadixBits() : 0;
+	// const auto old_radix_bits = local_grouping ? local_grouping->GetRadixBits() : 0;
 
 	const auto& config = WindowOperatorConfig::get();
 	if (!config.simulate_shrink_partitions && !config.shrink_partitions) {
@@ -546,11 +546,11 @@ SinkResultType HashedSort::Sink(ExecutionContext &context, DataChunk &input_chun
 	}
 
 	auto selection = SelectionVector{};
-	const auto chunk_size = input_chunk.size();
+	// const auto chunk_size = input_chunk.size();
 	auto result_count = idx_t{0};
 	if (config.simulate_shrink_partitions) {
 		gstate.UpdateLocalPartition(local_grouping, grouping_append);
-		const auto required_tuples_per_partition = config.predicate_value * config.expected_partitions;
+		const auto required_tuples_per_partition = static_cast<uint64_t>(config.predicate_value) * config.expected_partitions;
 		result_count = MinValue(input_chunk.size(), required_tuples_per_partition);
 		selection.Initialize(result_count);
 		for (idx_t i = 0; i < result_count; ++i) {
@@ -564,7 +564,7 @@ SinkResultType HashedSort::Sink(ExecutionContext &context, DataChunk &input_chun
 		// resolve_radix_bits(radix_bits, [&](const auto& constants){
 			// using Constants = std::decay_t<decltype(constants)>;
 
-			const auto value_count = WindowOperatorConfig::get().predicate_value;
+			const auto value_count = static_cast<uint64_t>(WindowOperatorConfig::get().predicate_value);
 			const auto chunk_size = input_chunk.size();
 			const auto hashes = FlatVector::GetData<const hash_t>(hash_vector);
 			const auto sort_values = FlatVector::GetData<const int32_t>(input_chunk.data[sort_column]);

@@ -10,6 +10,7 @@
 #include "pdqsort.h"
 
 #include <iostream>
+#include <algorithm>
 
 namespace duckdb {
 
@@ -150,6 +151,7 @@ private:
 	//! States for the iterator types
 	unsafe_vector<BlockIteratorState<BlockIteratorStateType::IN_MEMORY>> in_memory_states;
 	unsafe_vector<BlockIteratorState<BlockIteratorStateType::EXTERNAL>> external_states;
+	unsafe_vector<FilteredBlockIteratorState> filtered_states;
 
 	//! Allocation for merging/scanning the partition
 	AllocatedData merged_partition;
@@ -298,7 +300,11 @@ SortedRunMergerLocalState::SortedRunMergerLocalState(SortedRunMergerGlobalState 
 		auto &key_data = *run->key_data;
 		switch (iterator_state_type) {
 		case BlockIteratorStateType::IN_MEMORY:
-			in_memory_states.push_back(BlockIteratorState<BlockIteratorStateType::IN_MEMORY>(key_data));
+			if (gstate.merger.use_filter) {
+				filtered_states.push_back(FilteredBlockIteratorState(key_data, *run->pos_list));
+			} else {
+				in_memory_states.push_back(BlockIteratorState<BlockIteratorStateType::IN_MEMORY>(key_data));
+			}
 			break;
 		case BlockIteratorStateType::EXTERNAL:
 			external_states.push_back(
@@ -397,8 +403,12 @@ void SortedRunMergerLocalState::ComputePartitionBoundaries(SortedRunMergerGlobal
 	// Compute the end partition boundaries (lock-free)
 	switch (iterator_state_type) {
 	case BlockIteratorStateType::IN_MEMORY:
-		ComputePartitionBoundariesSwitch<BlockIteratorState<BlockIteratorStateType::IN_MEMORY>>(gstate, p_idx,
+		if (gstate.merger.use_filter) {
+			ComputePartitionBoundariesSwitch<FilteredBlockIteratorState>(gstate, p_idx, filtered_states);
+		} else {
+			ComputePartitionBoundariesSwitch<BlockIteratorState<BlockIteratorStateType::IN_MEMORY>>(gstate, p_idx,
 		                                                                                        in_memory_states);
+		}
 		break;
 	case BlockIteratorStateType::EXTERNAL:
 		ComputePartitionBoundariesSwitch<BlockIteratorState<BlockIteratorStateType::EXTERNAL>>(gstate, p_idx,
@@ -478,7 +488,8 @@ void SortedRunMergerLocalState::TemplatedComputePartitionBoundaries(SortedRunMer
                                                                     const optional_idx &p_idx,
                                                                     unsafe_vector<STATE> &states) {
 	using SORT_KEY = SortKey<SORT_KEY_TYPE>;
-	using BLOCK_ITERATOR = block_iterator_t<STATE, SORT_KEY>;
+	using BLOCK_ITERATOR = typename block_iterator_traits<SORT_KEY, STATE>::iterator_type;
+	// std::cout << "TemplatedComputePartitionBoundaries " << gstate.num_runs << " runs, \t" << "\n";
 
 	D_ASSERT(run_boundaries.size() == gstate.num_runs);
 
@@ -581,7 +592,11 @@ void SortedRunMergerLocalState::AcquirePartitionBoundaries(SortedRunMergerGlobal
 void SortedRunMergerLocalState::MergePartition(SortedRunMergerGlobalState &gstate) {
 	switch (iterator_state_type) {
 	case BlockIteratorStateType::IN_MEMORY:
-		MergePartitionSwitch<BlockIteratorState<BlockIteratorStateType::IN_MEMORY>>(gstate, in_memory_states);
+		if (gstate.merger.use_filter) {
+			MergePartitionSwitch<FilteredBlockIteratorState>(gstate, filtered_states);
+		} else {
+			MergePartitionSwitch<BlockIteratorState<BlockIteratorStateType::IN_MEMORY>>(gstate, in_memory_states);
+		}
 		break;
 	case BlockIteratorStateType::EXTERNAL:
 		MergePartitionSwitch<BlockIteratorState<BlockIteratorStateType::EXTERNAL>>(gstate, external_states);
@@ -623,7 +638,7 @@ template <class STATE, SortKeyType SORT_KEY_TYPE>
 void SortedRunMergerLocalState::TemplatedMergePartition(SortedRunMergerGlobalState &gstate,
                                                         unsafe_vector<STATE> &states) {
 	using SORT_KEY = SortKey<SORT_KEY_TYPE>;
-	using BLOCK_ITERATOR = block_iterator_t<STATE, SORT_KEY>;
+	using BLOCK_ITERATOR = typename block_iterator_traits<SORT_KEY, STATE>::iterator_type;
 
 	if (!merged_partition.IsSet()) {
 		merged_partition =
@@ -634,6 +649,8 @@ void SortedRunMergerLocalState::TemplatedMergePartition(SortedRunMergerGlobalSta
 	merged_partition_index = 0;
 
 	idx_t active_runs = 0;
+
+	// std::cout << "TemplatedMergePartition " << gstate.num_runs << " runs, " << run_boundaries.size() << " boundaries, " << states.size() << " states \n";
 	for (idx_t run_idx = 0; run_idx < gstate.num_runs; run_idx++) {
 		auto &state = states[run_idx];
 		state.SetKeepPinned(true);
@@ -644,9 +661,14 @@ void SortedRunMergerLocalState::TemplatedMergePartition(SortedRunMergerGlobalSta
 		if (run_boundary.begin == run_boundary.end) {
 			continue;
 		}
+
 		active_runs++;
 
-		for (auto it = BLOCK_ITERATOR(state, run_boundary.begin); it != BLOCK_ITERATOR(state, run_boundary.end); ++it) {
+		auto it = BLOCK_ITERATOR(state, run_boundary.begin);
+		auto end = BLOCK_ITERATOR(state, run_boundary.end);
+
+		auto tuple_id = idx_t{0};
+		for (; it != end; ++it) {
 			merged_partition_keys[merged_partition_count++] = *it;
 		}
 	}
@@ -658,6 +680,8 @@ void SortedRunMergerLocalState::TemplatedMergePartition(SortedRunMergerGlobalSta
 			// std::cout << msg.str() + " (skip sort)\n";
 		return; // Only one active run, no need to sort (or index sort, which is approximate sorting)
 	}
+
+	// std::cout << "\tsort\n";
 
 	// Seems counter-intuitive to re-sort instead of merging, but modern sorting algorithms detect and merge
 	static const auto fallback = [](SORT_KEY *begin, SORT_KEY *end) {
@@ -698,7 +722,10 @@ void SortedRunMergerLocalState::ScanPartition(SortedRunMergerGlobalState &gstate
 template <SortKeyType SORT_KEY_TYPE>
 void SortedRunMergerLocalState::TemplatedScanPartition(SortedRunMergerGlobalState &gstate, DataChunk &chunk) {
 	using SORT_KEY = SortKey<SORT_KEY_TYPE>;
-	const auto count = MinValue<idx_t>(merged_partition_count - merged_partition_index, STANDARD_VECTOR_SIZE);
+	auto count = MinValue<idx_t>(merged_partition_count - merged_partition_index, STANDARD_VECTOR_SIZE);
+	if (WindowOperatorConfig::get().shrink_runs) {
+		count = MinValue<idx_t>(count, gstate.merger.sorted_runs[0]->Count());
+	}
 
 	//std::cout << "SortedRunMergerLocalState::TemplatedScanPartition\n";
 
@@ -821,6 +848,17 @@ SortedRunMerger::SortedRunMerger(const Sort &sort_p, vector<unique_ptr<SortedRun
                                  idx_t partition_size_p, bool external_p, bool is_index_sort_p)
     : sort(sort_p), sorted_runs(std::move(sorted_runs_p)), total_count(SortedRunsTotalCount(sorted_runs)),
       partition_size(partition_size_p), external(external_p), is_index_sort(is_index_sort_p) {
+
+  use_filter = std::all_of(sorted_runs.cbegin(), sorted_runs.cend(), [](const auto& sorted_run){
+  	return sorted_run->pos_list.has_value();
+  });
+
+  auto cnt = idx_t{0};
+  for (const auto& sorted_run : sorted_runs) {
+  	cnt += sorted_run->Count();
+  }
+  // std::cout << "SortedRunMerger: " << sorted_runs.size() << " runs, " << cnt << " tuples\n";
+
 }
 
 unique_ptr<LocalSourceState> SortedRunMerger::GetLocalSourceState(ExecutionContext &,

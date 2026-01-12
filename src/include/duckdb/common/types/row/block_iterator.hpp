@@ -12,6 +12,8 @@
 #include "duckdb/common/types/row/tuple_data_collection.hpp"
 #include "duckdb/common/types/row/tuple_data_states.hpp"
 
+#include <iostream>
+
 namespace duckdb {
 
 class TupleDataCollection;
@@ -141,6 +143,15 @@ private:
 };
 
 using InMemoryBlockIteratorState = BlockIteratorState<BlockIteratorStateType::IN_MEMORY>;
+
+class FilteredBlockIteratorState : public InMemoryBlockIteratorState {
+public:
+	explicit FilteredBlockIteratorState(const TupleDataCollection &key_data, const unsafe_vector<idx_t>& init_offsets)
+	    : InMemoryBlockIteratorState(key_data), offsets(init_offsets) {
+	}
+
+	const unsafe_vector<idx_t>& offsets;
+};
 
 //! State for iterating over blocks of an external (larger-than-memory) TupleDataCollection
 //! This state cannot be shared by multiple iterators, it is stateful
@@ -374,7 +385,7 @@ private:
 	idx_t tuple_idx;
 };
 
-template <class STATE, class T>
+template <class T>
 class filtered_block_iterator_t { // NOLINT: match stl case
 public:
 	using iterator_category = std::random_access_iterator_tag;
@@ -384,9 +395,10 @@ public:
 	using difference_type = idx_t;
 	using traits = std::iterator_traits<filtered_block_iterator_t>;
 	using offsets_it_t = unsafe_vector<idx_t>::const_iterator;
+	using STATE = FilteredBlockIteratorState;
 
 public:
-	explicit filtered_block_iterator_t(STATE &state_p) : state(&state_p), block_or_chunk_idx(0), tuple_idx(0), offsets_it(state_p.offsets->cbegin()) {
+	explicit filtered_block_iterator_t(STATE &state_p) : state(&state_p), block_or_chunk_idx(0), tuple_idx(0), offsets_it(++state_p.offsets.cbegin()) {
 	}
 
 	explicit filtered_block_iterator_t()
@@ -397,7 +409,7 @@ public:
 
 	filtered_block_iterator_t(STATE &state_p, const idx_t &index) : state(&state_p) { // NOLINT: uninitialized on purpose
 		state->RandomAccess(block_or_chunk_idx, tuple_idx, index);
-		offsets_it = state_p.offsets->cbegin() + index;
+		offsets_it = ++state_p.offsets.cbegin() + static_cast<offsets_it_t::difference_type>(index);
 	}
 
 	filtered_block_iterator_t(STATE &state_p, const idx_t &block_idx_p, const idx_t &tuple_idx_p, const offsets_it_t& offsets_it_p)
@@ -440,7 +452,7 @@ public:
 	}
 	filtered_block_iterator_t &operator--() {
 		--offsets_it;
-		state->Decrement(block_or_chunk_idx, tuple_idx, *offsets_it);
+		state->Subtract(block_or_chunk_idx, tuple_idx, *offsets_it);
 		return *this;
 	}
 	filtered_block_iterator_t operator--(int) {
@@ -494,7 +506,7 @@ public:
 	}
 
 	reference operator[](const difference_type &n) const {
-		auto begin = state->offsets->cbegin();
+		auto begin = state->offsets.cbegin();
 		auto n_internal = idx_t{0};
 		for (auto i = idx_t{0}; i <= n; ++i) {
 			n_internal += *begin;
@@ -505,33 +517,39 @@ public:
 
 	//! Difference between iterators
 	difference_type operator-(const filtered_block_iterator_t &other) const {
-		return offsets_it - other.offsets_it;
+		return static_cast<difference_type>(offsets_it - other.offsets_it);
 		// return state->GetIndex(block_or_chunk_idx, tuple_idx) -
 		//        other.state->GetIndex(other.block_or_chunk_idx, other.tuple_idx);
 	}
 
 	//! Comparison operators
 	bool operator==(const filtered_block_iterator_t &other) const {
-		return block_or_chunk_idx == other.block_or_chunk_idx && tuple_idx == other.tuple_idx;
+		return offsets_it == other.offsets_it;
+		// return block_or_chunk_idx == other.block_or_chunk_idx && tuple_idx == other.tuple_idx;
 	}
 	bool operator!=(const filtered_block_iterator_t &other) const {
-		return block_or_chunk_idx != other.block_or_chunk_idx || tuple_idx != other.tuple_idx;
+		return offsets_it != other.offsets_it;
+		// return block_or_chunk_idx != other.block_or_chunk_idx || tuple_idx != other.tuple_idx;
 	}
 	bool operator<(const filtered_block_iterator_t &other) const {
-		return block_or_chunk_idx == other.block_or_chunk_idx ? tuple_idx < other.tuple_idx
-		                                                      : block_or_chunk_idx < other.block_or_chunk_idx;
+		return offsets_it < other.offsets_it;
+		// return block_or_chunk_idx == other.block_or_chunk_idx ? tuple_idx < other.tuple_idx
+		//                                                       : block_or_chunk_idx < other.block_or_chunk_idx;
 	}
 	bool operator>(const filtered_block_iterator_t &other) const {
-		return block_or_chunk_idx == other.block_or_chunk_idx ? tuple_idx > other.tuple_idx
-		                                                      : block_or_chunk_idx > other.block_or_chunk_idx;
+		return offsets_it > other.offsets_it;
+		// return block_or_chunk_idx == other.block_or_chunk_idx ? tuple_idx > other.tuple_idx
+		//                                                       : block_or_chunk_idx > other.block_or_chunk_idx;
 	}
 	bool operator<=(const filtered_block_iterator_t &other) const {
-		return block_or_chunk_idx == other.block_or_chunk_idx ? tuple_idx <= other.tuple_idx
-		                                                      : block_or_chunk_idx <= other.block_or_chunk_idx;
+		return offsets_it <= other.offsets_it;
+		// return block_or_chunk_idx == other.block_or_chunk_idx ? tuple_idx <= other.tuple_idx
+		//                                                       : block_or_chunk_idx <= other.block_or_chunk_idx;
 	}
 	bool operator>=(const filtered_block_iterator_t &other) const {
-		return block_or_chunk_idx == other.block_or_chunk_idx ? tuple_idx >= other.tuple_idx
-		                                                      : block_or_chunk_idx >= other.block_or_chunk_idx;
+		return offsets_it >= other.offsets_it;
+		// return block_or_chunk_idx == other.block_or_chunk_idx ? tuple_idx >= other.tuple_idx
+		//                                                       : block_or_chunk_idx >= other.block_or_chunk_idx;
 	}
 
 private:
@@ -539,6 +557,25 @@ private:
 	idx_t block_or_chunk_idx;
 	idx_t tuple_idx;
 	offsets_it_t offsets_it;
+};
+
+
+template <class SORT_KEY, class STATE>
+struct block_iterator_traits {};
+
+template <class SORT_KEY>
+struct block_iterator_traits<SORT_KEY, FilteredBlockIteratorState> {
+	typedef filtered_block_iterator_t<SORT_KEY> iterator_type;
+};
+
+template <class SORT_KEY>
+struct block_iterator_traits<SORT_KEY, ExternalBlockIteratorState> {
+	typedef block_iterator_t<ExternalBlockIteratorState, SORT_KEY> iterator_type;
+};
+
+template <class SORT_KEY>
+struct block_iterator_traits<SORT_KEY, InMemoryBlockIteratorState> {
+	typedef block_iterator_t<InMemoryBlockIteratorState, SORT_KEY> iterator_type;
 };
 
 } // namespace duckdb

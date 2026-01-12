@@ -53,6 +53,8 @@ public:
 	const idx_t partition_size;
 	const bool external;
 	const bool is_index_sort;
+
+	bool use_filter{false};
 };
 
 } // namespace duckdb

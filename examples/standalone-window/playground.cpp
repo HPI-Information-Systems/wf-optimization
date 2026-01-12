@@ -145,7 +145,7 @@ int main(int argc, char* argv[]) {
         //   "SELECT * from (select ss_store_sk, ss_sold_date_sk, rank() OVER (PARTITION BY ss_store_sk ORDER BY ss_sold_date_sk) rnk FROM store_sales where ss_item_sk < 10000) t" :
         //  "SELECT * FROM (SELECT ss_store_sk, ss_sold_date_sk, rank() OVER (PARTITION BY ss_store_sk ORDER BY ss_sold_date_sk) rnk FROM store_sales where ss_item_sk < 10000) t";
 
-        const auto predicate_value = uint64_t{3};
+        const auto predicate_value = int64_t{3};
         WindowOperatorConfig::get().predicate_value = predicate_value;
         WindowOperatorConfig::get().do_filter = level == WindowOperatorConfig::OptimizationLevel::EarlyOut || level == WindowOperatorConfig::OptimizationLevel::Filter;
         WindowOperatorConfig::get().do_early_out = level == WindowOperatorConfig::OptimizationLevel::EarlyOut;
@@ -175,7 +175,8 @@ int main(int argc, char* argv[]) {
 
 
         // std::cout << "== Print ==\n";
-        con.Query(query + " ORDER BY a, rnk")->Print();
+        // con.Query(query + " ORDER BY a, rnk")->Print();
+        con.Query(query)->Print();
         // con.Query("select min(cnt), max(cnt), avg(cnt), min(o_cnt), max(o_cnt), avg(o_cnt) from (SELECT count(*) cnt, count(distinct ss_sold_date_sk) o_cnt from store_sales group BY ss_item_sk) t")->Print();
         //con.Query("SELECT * FROM (SELECT ss_item_sk, ss_sold_date_sk, rank() OVER (PARTITION BY ss_item_sk ORDER BY ss_sold_date_sk) rnk FROM store_sales) t WHERE rnk < 20")->Print();
 

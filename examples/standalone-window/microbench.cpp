@@ -137,7 +137,7 @@ int main(int argc, char* argv[]) {
 	ofstream << "CONFIGURATION,ROW_COUNT,PARTITION_COUNT,RESULTS_PER_PARTITION,RESULT_COUNT,RUNTIME_NS\n";
 	ofstream << std::fixed;
 
-	const auto predicate_value = uint64_t{3};
+	const auto predicate_value = int64_t{3};
 	for (const auto& [run_row_count, partition_count, filename] : file_names) {
 		auto num_runs = 1'000;
 		if ((core_count == 1 && run_row_count > 100'000) || run_row_count > 1'000'000) {

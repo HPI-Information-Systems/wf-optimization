@@ -28,7 +28,7 @@ public:
 	void Scan(const SortedRun &sorted_run, const Vector &sort_key_pointers, const idx_t &count, DataChunk &chunk);
 
 private:
-	template <SortKeyType sort_key_type>
+	template <SortKeyType sort_key_type, bool HAS_POS_LIST>
 	void TemplatedScan(const SortedRun &sorted_run, const Vector &sort_key_pointers, const idx_t &count,
 	                   DataChunk &chunk);
 

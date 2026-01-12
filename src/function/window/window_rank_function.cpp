@@ -147,7 +147,7 @@ void WindowRankExecutor<Comparator, early_out>::EvaluateInternal(ExecutionContex
 
 	const auto comparator = Comparator{};
 
-	const auto my_id = ++gpeer.exec_id;
+	// const auto my_id = ++gpeer.exec_id;
 	const auto predicate_value = lpeer.predicate_value;
 
 	// std::cout << "ID " << my_id << "\trow_idx " << row_idx << "\tcount " << count << "\n";
@@ -301,8 +301,8 @@ void WindowRankExecutor<Comparator, early_out>::EvaluateInternal(ExecutionContex
 }
 
 template class WindowRankExecutor<NoneComparator, false>;
-template class WindowRankExecutor<std::less_equal<uint64_t>, false>;
-template class WindowRankExecutor<std::less_equal<uint64_t>, true>;
+template class WindowRankExecutor<std::less_equal<int64_t>, false>;
+template class WindowRankExecutor<std::less_equal<int64_t>, true>;
 
 //===--------------------------------------------------------------------===//
 // WindowDenseRankExecutor

@@ -6,7 +6,11 @@ set(CMAKE_CXX_STANDARD 17)
 #set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address")
 
 include_directories(../../src/include)
-link_directories(../../build/release/src)
+if (CMAKE_BUILD_TYPE STREQUAL "Release")
+	link_directories(../../build/release/src)
+else()
+	link_directories(../../build/debug/src)
+endif()
 
 include_directories(../../extension/core_functions)
 

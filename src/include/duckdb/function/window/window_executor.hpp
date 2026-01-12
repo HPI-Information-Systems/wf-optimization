@@ -52,7 +52,7 @@ public:
 	bool has_filter;
 	SelectionVector sel;
 	idx_t match_count{0};
-	uint64_t predicate_value{0};
+	int64_t predicate_value{0};
 	unsafe_vector<idx_t>* partition_begins{nullptr};
 };
 
