@@ -55,7 +55,6 @@ int main(int argc, char* argv[]) {
 	auto row_count = size_t{1'000'000};
 	auto core_count = std::stoul(execute_command("nproc"));
 	auto skewed = false;
-	auto experimental = false;
 
 	for (auto arg_id = 1; arg_id < argc; ++arg_id) {
 		const auto argument = std::string{argv[arg_id]};
@@ -63,8 +62,6 @@ int main(int argc, char* argv[]) {
 			core_count = 1;
 		} else if (argument == "--skewed") {
 			skewed = true;
-		} else if (argument == "--experimental") {
-			experimental = true;
 		} else if (arg_id == 1) {
 			row_count = std::stoi(argument);
 		} else {
@@ -148,12 +145,8 @@ int main(int argc, char* argv[]) {
 		}
 
 		std::cout << run_row_count << " rows, " << partition_count << " partitions, " << num_runs << " runs\n";
-		auto level_lower = uint8_t{0};
-		auto level_upper = static_cast<uint8_t>(WindowOperatorConfig::OptimizationLevel::EarlyOut);
-
-		if (experimental) {
-			level_upper = static_cast<uint8_t>(WindowOperatorConfig::OptimizationLevel::ShrinkPartitions);
-		}
+		const auto level_lower = uint8_t{0};
+		const auto level_upper = static_cast<uint8_t>(WindowOperatorConfig::OptimizationLevel::ShrinkPartitions);
 
 		con.BeginTransaction();
 		con.Query("create table eval (a int, b int, c int);");
@@ -163,9 +156,6 @@ int main(int argc, char* argv[]) {
 		for (auto level_int = level_lower; level_int <= level_upper; ++level_int) {
 			const auto level = static_cast<WindowOperatorConfig::OptimizationLevel>(level_int);
 
-			if (level == WindowOperatorConfig::OptimizationLevel::ShrinkRuns) {
-				continue;
-			}
 			const auto level_str = WindowOperatorConfig::optimization_level_to_str(level);
 
 			const auto predicate_value = uint64_t{3};

@@ -7,8 +7,10 @@ set(CMAKE_CXX_STANDARD 17)
 
 include_directories(../../src/include)
 if (CMAKE_BUILD_TYPE STREQUAL "Release")
+	message("Building in Release mode.")
 	link_directories(../../build/release/src)
 else()
+	message(WARNING "Building in Debug mode.")
 	link_directories(../../build/debug/src)
 endif()
 

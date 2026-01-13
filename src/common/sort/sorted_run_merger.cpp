@@ -128,7 +128,7 @@ private:
 
 	//! Scan from the merged partition
 	void ScanPartition(SortedRunMergerGlobalState &gstate, DataChunk &chunk);
-	template <SortKeyType SORT_KEY_TYPE>
+	template <SortKeyType SORT_KEY_TYPE, bool HAS_POS_LIST>
 	void TemplatedScanPartition(SortedRunMergerGlobalState &gstate, DataChunk &chunk);
 
 	//! Materialize the merge
@@ -163,6 +163,9 @@ private:
 	//! For scanning
 	Vector sort_key_pointers;
 	SortedRunScanState sorted_run_scan_state;
+
+	std::optional<unsafe_vector<idx_t>> pos_list;
+	unsafe_vector<idx_t>::const_iterator pos_list_it;
 };
 
 //===--------------------------------------------------------------------===//
@@ -649,6 +652,7 @@ void SortedRunMergerLocalState::TemplatedMergePartition(SortedRunMergerGlobalSta
 	merged_partition_index = 0;
 
 	idx_t active_runs = 0;
+	pos_list.reset();
 
 	// std::cout << "TemplatedMergePartition " << gstate.num_runs << " runs, " << run_boundaries.size() << " boundaries, " << states.size() << " states \n";
 	for (idx_t run_idx = 0; run_idx < gstate.num_runs; run_idx++) {
@@ -690,55 +694,99 @@ void SortedRunMergerLocalState::TemplatedMergePartition(SortedRunMergerGlobalSta
 	duckdb_vergesort::vergesort(merged_partition_keys, merged_partition_keys + merged_partition_count,
 	                            std::less<SORT_KEY>(), fallback);
 
+	if constexpr (std::is_same_v<STATE, FilteredBlockIteratorState> && SORT_KEY_TYPE == SortKeyType::NO_PAYLOAD_FIXED_16) {
+		pos_list.emplace();
+		pos_list->reserve(merged_partition_count);
+		const auto predicate = static_cast<uint64_t>(WindowOperatorConfig::get().predicate_value);
+
+		auto partition = merged_partition_keys[0].part0;
+		auto order_by = merged_partition_keys[0].part1;
+		auto order_by_count = idx_t{1};
+		auto i = idx_t{0};
+		auto last_match = idx_t{0};
+		for (auto i = idx_t{0}; i < merged_partition_count; ++i) {
+			const auto& current_key = merged_partition_keys[i];
+			if (current_key.part0 != partition) {
+				partition = current_key.part0;
+				order_by = current_key.part1;
+				order_by_count = 1;
+				pos_list->push_back(i);
+				last_match = i;
+				continue;
+			}
+
+			if (current_key.part0 != order_by && order_by_count <= predicate) {
+				++order_by_count;
+				pos_list->push_back(i);
+				last_match = i;
+				continue;
+			}
+		}
+
+		pos_list_it = pos_list->cbegin();
+	}
+
 	// std::cout << msg.str() + " (sort)\n";
 }
 
 void SortedRunMergerLocalState::ScanPartition(SortedRunMergerGlobalState &gstate, DataChunk &chunk) {
-	switch (sort_key_type) {
-	case SortKeyType::NO_PAYLOAD_FIXED_8:
-		return TemplatedScanPartition<SortKeyType::NO_PAYLOAD_FIXED_8>(gstate, chunk);
-	case SortKeyType::NO_PAYLOAD_FIXED_16:
-		return TemplatedScanPartition<SortKeyType::NO_PAYLOAD_FIXED_16>(gstate, chunk);
-	case SortKeyType::NO_PAYLOAD_FIXED_24:
-		return TemplatedScanPartition<SortKeyType::NO_PAYLOAD_FIXED_24>(gstate, chunk);
-	case SortKeyType::NO_PAYLOAD_FIXED_32:
-		return TemplatedScanPartition<SortKeyType::NO_PAYLOAD_FIXED_32>(gstate, chunk);
-	case SortKeyType::NO_PAYLOAD_VARIABLE_32:
-		return TemplatedScanPartition<SortKeyType::NO_PAYLOAD_VARIABLE_32>(gstate, chunk);
-	case SortKeyType::PAYLOAD_FIXED_16:
-		return TemplatedScanPartition<SortKeyType::PAYLOAD_FIXED_16>(gstate, chunk);
-	case SortKeyType::PAYLOAD_FIXED_24:
-		return TemplatedScanPartition<SortKeyType::PAYLOAD_FIXED_24>(gstate, chunk);
-	case SortKeyType::PAYLOAD_FIXED_32:
-		return TemplatedScanPartition<SortKeyType::PAYLOAD_FIXED_32>(gstate, chunk);
-	case SortKeyType::PAYLOAD_VARIABLE_32:
-		return TemplatedScanPartition<SortKeyType::PAYLOAD_VARIABLE_32>(gstate, chunk);
-	default:
-		throw NotImplementedException("SortedRunMergerLocalState::ScanPartition for %s",
-		                              EnumUtil::ToString(sort_key_type));
-	}
+	resolve_pos_list(pos_list.has_value(), [&](const auto has_pos_list) {
+		constexpr bool HAS_POS_LIST = decltype(has_pos_list)::value;
+		switch (sort_key_type) {
+		case SortKeyType::NO_PAYLOAD_FIXED_8:
+			return TemplatedScanPartition<SortKeyType::NO_PAYLOAD_FIXED_8, HAS_POS_LIST>(gstate, chunk);
+		case SortKeyType::NO_PAYLOAD_FIXED_16:
+			return TemplatedScanPartition<SortKeyType::NO_PAYLOAD_FIXED_16, HAS_POS_LIST>(gstate, chunk);
+		case SortKeyType::NO_PAYLOAD_FIXED_24:
+			return TemplatedScanPartition<SortKeyType::NO_PAYLOAD_FIXED_24, HAS_POS_LIST>(gstate, chunk);
+		case SortKeyType::NO_PAYLOAD_FIXED_32:
+			return TemplatedScanPartition<SortKeyType::NO_PAYLOAD_FIXED_32, HAS_POS_LIST>(gstate, chunk);
+		case SortKeyType::NO_PAYLOAD_VARIABLE_32:
+			return TemplatedScanPartition<SortKeyType::NO_PAYLOAD_VARIABLE_32, HAS_POS_LIST>(gstate, chunk);
+		case SortKeyType::PAYLOAD_FIXED_16:
+			return TemplatedScanPartition<SortKeyType::PAYLOAD_FIXED_16, HAS_POS_LIST>(gstate, chunk);
+		case SortKeyType::PAYLOAD_FIXED_24:
+			return TemplatedScanPartition<SortKeyType::PAYLOAD_FIXED_24, HAS_POS_LIST>(gstate, chunk);
+		case SortKeyType::PAYLOAD_FIXED_32:
+			return TemplatedScanPartition<SortKeyType::PAYLOAD_FIXED_32, HAS_POS_LIST>(gstate, chunk);
+		case SortKeyType::PAYLOAD_VARIABLE_32:
+			return TemplatedScanPartition<SortKeyType::PAYLOAD_VARIABLE_32, HAS_POS_LIST>(gstate, chunk);
+		default:
+			throw NotImplementedException("SortedRunMergerLocalState::ScanPartition for %s",
+			                              EnumUtil::ToString(sort_key_type));
+		}
+	});
 }
 
-template <SortKeyType SORT_KEY_TYPE>
+template <SortKeyType SORT_KEY_TYPE, bool HAS_POS_LIST>
 void SortedRunMergerLocalState::TemplatedScanPartition(SortedRunMergerGlobalState &gstate, DataChunk &chunk) {
 	using SORT_KEY = SortKey<SORT_KEY_TYPE>;
-	auto count = MinValue<idx_t>(merged_partition_count - merged_partition_index, STANDARD_VECTOR_SIZE);
-	if (WindowOperatorConfig::get().shrink_runs) {
-		count = MinValue<idx_t>(count, gstate.merger.sorted_runs[0]->Count());
-	}
-
-	//std::cout << "SortedRunMergerLocalState::TemplatedScanPartition\n";
 
 	// Grab pointers to sort keys
 	const auto merged_partition_keys = reinterpret_cast<SORT_KEY *>(merged_partition.get()) + merged_partition_index;
 	const auto sort_keys = FlatVector::GetData<SORT_KEY *>(sort_key_pointers);
-	for (idx_t i = 0; i < count; i++) {
-		sort_keys[i] = &merged_partition_keys[i];
-	}
-	merged_partition_index += count;
 
-	// Scan
-	sorted_run_scan_state.Scan(*gstate.merger.sorted_runs[0], sort_key_pointers, count, chunk);
+	auto count = idx_t{0};
+	if constexpr (!HAS_POS_LIST) {
+		const auto count = MinValue<idx_t>(merged_partition_count - merged_partition_index, STANDARD_VECTOR_SIZE);
+		for (idx_t i = 0; i < count; i++) {
+			sort_keys[i] = &merged_partition_keys[i];
+		}
+		merged_partition_index += count;
+
+		// Scan
+		sorted_run_scan_state.Scan(*gstate.merger.sorted_runs[0], sort_key_pointers, count, chunk);
+
+	} else {
+		const auto count = MinValue<idx_t>(static_cast<idx_t>(pos_list->cend() - pos_list_it), STANDARD_VECTOR_SIZE);
+		for (idx_t i = 0; i < count; i++) {
+			sort_keys[i] = &merged_partition_keys[*pos_list_it];
+			++pos_list_it;
+		}
+
+		// Scan
+		sorted_run_scan_state.Scan(*gstate.merger.sorted_runs[0], sort_key_pointers, count, chunk);
+	}
 }
 
 void SortedRunMergerLocalState::MaterializePartition(SortedRunMergerGlobalState &gstate) {

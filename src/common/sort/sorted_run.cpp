@@ -23,15 +23,6 @@ SortedRunScanState::SortedRunScanState(ClientContext &context, const Sort &sort_
 	decoded_key.Initialize(context, {sort.decode_sort_key->return_type});
 }
 
-template <typename Functor>
-void resolve_pos_list(bool has_pos_list, const Functor& fn) {
-	if (has_pos_list) {
-		fn(std::true_type{});
-	} else {
-		fn(std::false_type{});
-	}
-}
-
 void SortedRunScanState::Scan(const SortedRun &sorted_run, const Vector &sort_key_pointers, const idx_t &count,
                               DataChunk &chunk) {
 	resolve_pos_list(sorted_run.pos_list.has_value(), [&](const auto pos_list) {
@@ -63,43 +54,31 @@ void SortedRunScanState::Scan(const SortedRun &sorted_run, const Vector &sort_ke
 	});
 }
 
-template <class SORT_KEY, class PHYSICAL_TYPE, class PosList>
+template <class SORT_KEY, class PHYSICAL_TYPE>
 void TemplatedGetKeyAndPayload(SORT_KEY *const *const sort_keys, const idx_t &count, DataChunk &key,
-                               data_ptr_t *const payload_ptrs, const PosList& pos_list) {
+                               data_ptr_t *const payload_ptrs) {
 	const auto key_data = FlatVector::GetData<PHYSICAL_TYPE>(key.data[0]);
 
-	if constexpr (std::is_same_v<PosList, std::false_type>) {
-		for (idx_t i = 0; i < count; i++) {
-			auto &sort_key = *sort_keys[i];
-			sort_key.Deconstruct(key_data[i]);
-			if (SORT_KEY::HAS_PAYLOAD) {
-				payload_ptrs[i] = sort_key.GetPayload();
-			}
-		}
-	} else {
-		auto offset = idx_t{0};
-		// std::cout << "TemplatedGetKeyAndPayload " + std::to_string(pos_list.size()) + "\t" + std::to_string(count) + "\n";
-		for (idx_t i = 0; i < count; i++) {
-			offset += pos_list[i];
-			auto &sort_key = *sort_keys[i];
-			sort_key.Deconstruct(key_data[i]);
-			if (SORT_KEY::HAS_PAYLOAD) {
-				payload_ptrs[i] = sort_key.GetPayload();
-			}
+	for (idx_t i = 0; i < count; i++) {
+		auto &sort_key = *sort_keys[i];
+		sort_key.Deconstruct(key_data[i]);
+		if (SORT_KEY::HAS_PAYLOAD) {
+			payload_ptrs[i] = sort_key.GetPayload();
 		}
 	}
+
 	key.SetCardinality(count);
 }
 
-template <class SORT_KEY, class PosList>
+template <class SORT_KEY>
 void GetKeyAndPayload(SORT_KEY *const *const sort_keys, const idx_t &count, DataChunk &key,
-                      data_ptr_t *const payload_ptrs, const PosList& pos_list) {
+                      data_ptr_t *const payload_ptrs) {
 	const auto type_id = key.data[0].GetType().id();
 	switch (type_id) {
 	case LogicalTypeId::BLOB:
-		return TemplatedGetKeyAndPayload<SORT_KEY, string_t>(sort_keys, count, key, payload_ptrs, pos_list);
+		return TemplatedGetKeyAndPayload<SORT_KEY, string_t>(sort_keys, count, key, payload_ptrs);
 	case LogicalTypeId::BIGINT:
-		return TemplatedGetKeyAndPayload<SORT_KEY, int64_t>(sort_keys, count, key, payload_ptrs, pos_list);
+		return TemplatedGetKeyAndPayload<SORT_KEY, int64_t>(sort_keys, count, key, payload_ptrs);
 	default:
 		throw NotImplementedException("GetKeyAndPayload for %s", EnumUtil::ToString(type_id));
 	}
@@ -141,11 +120,7 @@ void SortedRunScanState::TemplatedScan(const SortedRun &sorted_run, const Vector
 	// Decode from key
 	if (!output_projection_columns[0].is_payload) {
 		key.Reset();
-		if constexpr (HAS_POS_LIST) {
-			GetKeyAndPayload(sort_keys, count, key, payload_ptrs, *sorted_run.pos_list);
-		} else {
-			GetKeyAndPayload(sort_keys, count, key, payload_ptrs, std::false_type{});
-		}
+		GetKeyAndPayload(sort_keys, count, key, payload_ptrs);
 
 		decoded_key.Reset();
 		key_executor.Execute(key, decoded_key);
@@ -384,31 +359,12 @@ static void TemplatedSort(ClientContext &context, const TupleDataCollection &key
 		return stream.str();
 	};
 
-	// auto msg = std::stringstream{};
-	// msg << "SortedRun::TemplatedSort\n" << key_data.Count() << " rows, " << print_vec(sort_skippable_bytes) << " skippable bytes, " << ska_sort_width << " sort width, " << std::to_string(static_cast<uint8_t>(SORT_KEY_TYPE)) << " type, requires next sort " << std::boolalpha << requires_next_sort << " " << (!SORT_KEY::CONSTANT_SIZE) << "  " << (SORT_KEY::INLINE_LENGTH != sizeof(uint64_t)) << "\n";
-	// msg << "Key Data: " << const_cast<TupleDataCollection&>(key_data).ToString() << "\n";
-
-	// const auto print_keys = [&](){
-	// 	auto my_msg = std::stringstream{};
-	// 	my_msg << "{ ";
-	// 	for (auto it = begin; it != end; ++it) {
-	// 		if (it != begin) {
-	// 			my_msg << ", ";
-	// 		}
-	// 		PrintSortKey<SORT_KEY::PARTS>(&(it->part0), my_msg);
-	// 	}
-	// 	my_msg << " }";
-	// 	return my_msg.str();
-	// };
-
-	// msg << "Before: " << print_keys() << "\n";
-
 	const auto fallback = [ska_extract_key](const BLOCK_ITERATOR &fb_begin, const BLOCK_ITERATOR &fb_end) {
 		duckdb_ska_sort::ska_sort(fb_begin, fb_end, ska_extract_key);
 	};
 	duckdb_vergesort::vergesort(begin, end, std::less<SORT_KEY>(), fallback);
 
-	auto offsets = unsafe_vector<idx_t>{};
+	// auto offsets = unsafe_vector<idx_t>{};
 	if constexpr (SORT_KEY_TYPE == SortKeyType::NO_PAYLOAD_FIXED_16) {
 		pos_list.emplace();
 		pos_list->reserve(key_data.Count());
@@ -425,7 +381,7 @@ static void TemplatedSort(ClientContext &context, const TupleDataCollection &key
 				order_by = it->part1;
 				order_by_count = 1;
 				pos_list->push_back(i - last_match);
-				offsets.push_back(i);
+				// offsets.push_back(i);
 				last_match = i;
 				continue;
 			}
@@ -433,18 +389,12 @@ static void TemplatedSort(ClientContext &context, const TupleDataCollection &key
 			if (it->part0 != order_by && order_by_count <= predicate) {
 				++order_by_count;
 				pos_list->push_back(i - last_match);
-				offsets.push_back(i);
+				// offsets.push_back(i);
 				last_match = i;
 				continue;
 			}
 		}
 	}
-
-	// msg << "PosList: " << print_vec(offsets) << "\n";
-	// msg << "Offsets: " << print_vec(*pos_list) << "\n";
-
-	// msg << "After: " << print_keys() << "\n";
-	// std::cout << msg.str();
 
 	if (context.interrupted.load(std::memory_order_relaxed)) {
 		throw InterruptException();

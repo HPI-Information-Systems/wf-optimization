@@ -48,7 +48,6 @@ int main(int argc, char* argv[]) {
     auto partition_count = size_t{10};
     auto core_count = std::stoul(execute_command("nproc"));
     auto randomized = false;
-    auto experimental = false;
 
     for (auto arg_id = 1; arg_id < argc; ++arg_id) {
         const auto argument = std::string{argv[arg_id]};
@@ -56,8 +55,6 @@ int main(int argc, char* argv[]) {
             core_count = 1;
         } else if (argument == "--randomized") {
             randomized = true;
-        } else if (argument == "--experimental") {
-            experimental = true;
         } else if (arg_id == 1) {
             row_count = std::stoul(argument);
         } else if (arg_id == 2) {
@@ -104,12 +101,8 @@ int main(int argc, char* argv[]) {
 
 
     std::cout << row_count << " rows, " << partition_count << " partitions\n";
-    auto level_lower = uint8_t{0};
-    auto level_upper = static_cast<uint8_t>(WindowOperatorConfig::OptimizationLevel::EarlyOut);
-
-    if (experimental) {
-        level_upper = static_cast<uint8_t>(WindowOperatorConfig::OptimizationLevel::ShrinkPartitions);
-    }
+    const auto level_lower = uint8_t{0};
+    const auto level_upper = static_cast<uint8_t>(WindowOperatorConfig::OptimizationLevel::ShrinkPartitions);
 
     for (auto level_int = level_lower; level_int <= level_upper; ++level_int) {
         const auto level = static_cast<WindowOperatorConfig::OptimizationLevel>(level_int);

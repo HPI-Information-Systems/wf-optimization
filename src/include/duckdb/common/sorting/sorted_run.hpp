@@ -11,6 +11,8 @@
 #include "duckdb/common/types/row/tuple_data_states.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 
+#include <type_traits>
+
 namespace duckdb {
 
 class Sort;
@@ -39,6 +41,15 @@ private:
 	DataChunk decoded_key;
 	TupleDataScanState payload_state;
 };
+
+template <typename Functor>
+void resolve_pos_list(bool has_pos_list, const Functor& fn) {
+	if (has_pos_list) {
+		fn(std::true_type{});
+	} else {
+		fn(std::false_type{});
+	}
+}
 
 class SortedRun {
 public:
