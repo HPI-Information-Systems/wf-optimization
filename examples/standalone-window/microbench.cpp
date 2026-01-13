@@ -32,22 +32,22 @@ using namespace duckdb;
 
 
 bool fileExists(const std::string& filename) {
-    std::ifstream file(filename);
-    return file.good();  // Returns true if the file exists and is accessible
+	std::ifstream file(filename);
+	return file.good();  // Returns true if the file exists and is accessible
 }
 
 std::string execute_command(const std::string& command) {
-    std::array<char, 128> buffer;
-    std::string result;
-    auto* pipe = popen(command.c_str(), "r");
-    if (!pipe) {
-        throw std::runtime_error("popen() failed!");
-    }
-    while (fgets(buffer.data(), buffer.size(), pipe) != nullptr) {
-        result += buffer.data();
-    }
-    pclose(pipe);
-    return result;
+	std::array<char, 128> buffer;
+	std::string result;
+	auto* pipe = popen(command.c_str(), "r");
+	if (!pipe) {
+		throw std::runtime_error("popen() failed!");
+	}
+	while (fgets(buffer.data(), buffer.size(), pipe) != nullptr) {
+		result += buffer.data();
+	}
+	pclose(pipe);
+	return result;
 }
 
 
@@ -146,7 +146,7 @@ int main(int argc, char* argv[]) {
 
 		std::cout << run_row_count << " rows, " << partition_count << " partitions, " << num_runs << " runs\n";
 		const auto level_lower = uint8_t{0};
-		const auto level_upper = static_cast<uint8_t>(WindowOperatorConfig::OptimizationLevel::ShrinkPartitions);
+		const auto level_upper = static_cast<uint8_t>(WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptive);
 
 		con.BeginTransaction();
 		con.Query("create table eval (a int, b int, c int);");
@@ -159,12 +159,14 @@ int main(int argc, char* argv[]) {
 			const auto level_str = WindowOperatorConfig::optimization_level_to_str(level);
 
 			const auto predicate_value = uint64_t{3};
+			const auto is_combined = level == WindowOperatorConfig::OptimizationLevel::Combined;
 			WindowOperatorConfig::get().predicate_value = predicate_value;
-			WindowOperatorConfig::get().do_filter = level == WindowOperatorConfig::OptimizationLevel::Filter || level == WindowOperatorConfig::OptimizationLevel::EarlyOut;
-			WindowOperatorConfig::get().do_early_out = level == WindowOperatorConfig::OptimizationLevel::EarlyOut;
-			WindowOperatorConfig::get().shrink_runs = level == WindowOperatorConfig::OptimizationLevel::ShrinkRuns;
+			WindowOperatorConfig::get().do_filter = level == WindowOperatorConfig::OptimizationLevel::EarlyOut || level == WindowOperatorConfig::OptimizationLevel::Filter || is_combined;
+			WindowOperatorConfig::get().do_early_out = level == WindowOperatorConfig::OptimizationLevel::EarlyOut || is_combined;
+			WindowOperatorConfig::get().shrink_runs = level == WindowOperatorConfig::OptimizationLevel::ShrinkRuns || is_combined;
 			WindowOperatorConfig::get().simulate_shrink_partitions = level == WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsSimulated;
-			WindowOperatorConfig::get().shrink_partitions = level == WindowOperatorConfig::OptimizationLevel::ShrinkPartitions;
+			WindowOperatorConfig::get().shrink_partitions = level >= WindowOperatorConfig::OptimizationLevel::ShrinkPartitions || is_combined;
+			WindowOperatorConfig::get().shrink_partitions_adaptive = level >= WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptive || is_combined;
 			WindowOperatorConfig::get().expected_partitions = partition_count;
 
 			string query = WindowOperatorConfig::get().do_filter ?

@@ -331,6 +331,7 @@ public:
 		int32_t max_value{std::numeric_limits<int32_t>::min()};
 	};
 	std::unordered_map<hash_t, MinContainer> minima;
+	idx_t local_partition_count{0};
 };
 
 HashedSortLocalSinkState::HashedSortLocalSinkState(ExecutionContext &context, const HashedSort &hashed_sort)
@@ -391,6 +392,12 @@ void HashedSortLocalSinkState::Hash(DataChunk &input_chunk, Vector &hash_vector)
 	group_chunk.Reset();
 	hash_exec.Execute(input_chunk, group_chunk);
 	VectorOperations::Hash(group_chunk.data[0], hash_vector, count);
+	if (WindowOperatorConfig::get().shrink_partitions_adaptive) {
+		local_partition_count = VectorOperations::HashAndCount(group_chunk.data[0], hash_vector, count);
+		// std::cout << std::to_string(local_partition_count) + "\n";
+	} else {
+		VectorOperations::Hash(group_chunk.data[0], hash_vector, count);
+	}
 	for (idx_t prt_idx = 1; prt_idx < group_chunk.ColumnCount(); ++prt_idx) {
 		VectorOperations::CombineHash(hash_vector, group_chunk.data[prt_idx], count);
 	}
@@ -538,7 +545,10 @@ SinkResultType HashedSort::Sink(ExecutionContext &context, DataChunk &input_chun
 	// const auto old_radix_bits = local_grouping ? local_grouping->GetRadixBits() : 0;
 
 	const auto& config = WindowOperatorConfig::get();
-	if (!config.simulate_shrink_partitions && !config.shrink_partitions) {
+	if ((!config.simulate_shrink_partitions && !config.shrink_partitions)
+		|| (config.shrink_partitions_adaptive
+			&& static_cast<double>(lstate.local_partition_count * static_cast<idx_t>(config.predicate_value)) >
+			   static_cast<double>(input_chunk.size()) * config.shrink_partitions_threshold)) {
 		gstate.UpdateLocalPartition(local_grouping, grouping_append);
 		local_grouping->Append(*grouping_append, payload_chunk);
 
@@ -570,42 +580,6 @@ SinkResultType HashedSort::Sink(ExecutionContext &context, DataChunk &input_chun
 			const auto sort_values = FlatVector::GetData<const int32_t>(input_chunk.data[sort_column]);
 
 			selection.Initialize(chunk_size);
-			// auto potential_matches = std::vector<idx_t>(chunk_size);
-
-			// for (auto i = idx_t{0}; i < chunk_size; ++i) {
-			// 	// const auto radix = Constants::ApplyMask(hashes[i]);
-			// 	// std::cout << "Row " << i << " Hash " << hashes[i] << " radix " << radix << " value " << sort_values[i] <<  "\n";
-			// 	auto& local_minima = lstate.minima[hashes[i]];
-			// 	if (local_minima.values.size() < value_count) {
-			// 		local_minima.values.insert(sort_values[i]);
-			// 		local_minima.max_value = MaxValue(local_minima.max_value, sort_values[i]);
-			// 		potential_matches[result_count++] = i;
-			// 		continue;
-			// 	}
-
-			// 	if (sort_values[i] <= local_minima.max_value) {
-			// 		potential_matches[result_count++] = i;
-			// 		const auto inserted = local_minima.values.insert(sort_values[i]).second;
-			// 		if (inserted) {
-			// 			local_minima.values.erase(std::prev(local_minima.values.end()));
-			// 			local_minima.max_value = *std::prev(local_minima.values.end());
-			// 		}
-			// 	}
-			// }
-
-			// potential_matches.resize(result_count);
-			// result_count = 0;
-
-			// for (auto i : potential_matches) {
-			// 	// const auto radix = Constants::ApplyMask(hashes[i]);
-			// 	// std::cout << "Row " << i << " Hash " << hashes[i] << " radix " << radix << " value " << sort_values[i] <<  "\n";
-			// 	const auto& local_minima = lstate.minima[hashes[i]];
-			// 	if (sort_values[i] <= local_minima.max_value) {
-			// 		selection.set_index(result_count, i);
-			// 		++result_count;
-			// 	}
-			// }
-
 			for (auto i = idx_t{0}; i < chunk_size; ++i) {
 				auto& local_minima = lstate.minima[hashes[i]];
 				if (local_minima.values.size() < value_count) {

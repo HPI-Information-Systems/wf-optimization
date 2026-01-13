@@ -48,6 +48,7 @@ int main(int argc, char* argv[]) {
     auto partition_count = size_t{10};
     auto core_count = std::stoul(execute_command("nproc"));
     auto randomized = false;
+    auto verbose = false;
 
     for (auto arg_id = 1; arg_id < argc; ++arg_id) {
         const auto argument = std::string{argv[arg_id]};
@@ -55,6 +56,8 @@ int main(int argc, char* argv[]) {
             core_count = 1;
         } else if (argument == "--randomized") {
             randomized = true;
+        } else if (argument == "--verbose") {
+            verbose = true;
         } else if (arg_id == 1) {
             row_count = std::stoul(argument);
         } else if (arg_id == 2) {
@@ -102,7 +105,7 @@ int main(int argc, char* argv[]) {
 
     std::cout << row_count << " rows, " << partition_count << " partitions\n";
     const auto level_lower = uint8_t{0};
-    const auto level_upper = static_cast<uint8_t>(WindowOperatorConfig::OptimizationLevel::ShrinkPartitions);
+    const auto level_upper = static_cast<uint8_t>(WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptive);
 
     for (auto level_int = level_lower; level_int <= level_upper; ++level_int) {
         const auto level = static_cast<WindowOperatorConfig::OptimizationLevel>(level_int);
@@ -139,12 +142,14 @@ int main(int argc, char* argv[]) {
         //  "SELECT * FROM (SELECT ss_store_sk, ss_sold_date_sk, rank() OVER (PARTITION BY ss_store_sk ORDER BY ss_sold_date_sk) rnk FROM store_sales where ss_item_sk < 10000) t";
 
         const auto predicate_value = int64_t{3};
+        const auto is_combined = level == WindowOperatorConfig::OptimizationLevel::Combined;
         WindowOperatorConfig::get().predicate_value = predicate_value;
-        WindowOperatorConfig::get().do_filter = level == WindowOperatorConfig::OptimizationLevel::EarlyOut || level == WindowOperatorConfig::OptimizationLevel::Filter;
-        WindowOperatorConfig::get().do_early_out = level == WindowOperatorConfig::OptimizationLevel::EarlyOut;
-        WindowOperatorConfig::get().shrink_runs = level == WindowOperatorConfig::OptimizationLevel::ShrinkRuns;
+        WindowOperatorConfig::get().do_filter = level == WindowOperatorConfig::OptimizationLevel::EarlyOut || level == WindowOperatorConfig::OptimizationLevel::Filter || is_combined;
+        WindowOperatorConfig::get().do_early_out = level == WindowOperatorConfig::OptimizationLevel::EarlyOut || is_combined;
+        WindowOperatorConfig::get().shrink_runs = level == WindowOperatorConfig::OptimizationLevel::ShrinkRuns || is_combined;
         WindowOperatorConfig::get().simulate_shrink_partitions = level == WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsSimulated;
-        WindowOperatorConfig::get().shrink_partitions = level == WindowOperatorConfig::OptimizationLevel::ShrinkPartitions;
+        WindowOperatorConfig::get().shrink_partitions = level >= WindowOperatorConfig::OptimizationLevel::ShrinkPartitions || is_combined;
+        WindowOperatorConfig::get().shrink_partitions_adaptive = level >= WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptive || is_combined;
         WindowOperatorConfig::get().expected_partitions = partition_count;
 
         string query = WindowOperatorConfig::get().do_filter ?
@@ -169,7 +174,9 @@ int main(int argc, char* argv[]) {
 
         // std::cout << "== Print ==\n";
         // con.Query(query + " ORDER BY a, rnk")->Print();
-        con.Query(query)->Print();
+        if (partition_count < 100 || verbose) {
+            con.Query(query)->Print();
+        }
         // con.Query("select min(cnt), max(cnt), avg(cnt), min(o_cnt), max(o_cnt), avg(o_cnt) from (SELECT count(*) cnt, count(distinct ss_sold_date_sk) o_cnt from store_sales group BY ss_item_sk) t")->Print();
         //con.Query("SELECT * FROM (SELECT ss_item_sk, ss_sold_date_sk, rank() OVER (PARTITION BY ss_item_sk ORDER BY ss_sold_date_sk) rnk FROM store_sales) t WHERE rnk < 20")->Print();
 

@@ -158,6 +158,7 @@ struct VectorOperations {
 	// hashes = HASH(input)
 	static void Hash(Vector &input, Vector &hashes, idx_t count);
 	static void Hash(Vector &input, Vector &hashes, const SelectionVector &rsel, idx_t count);
+	static idx_t HashAndCount(Vector &input, Vector &hashes, idx_t count);
 	// hashes ^= HASH(input)
 	static void CombineHash(Vector &hashes, Vector &input, idx_t count);
 	static void CombineHash(Vector &hashes, Vector &input, const SelectionVector &rsel, idx_t count);
