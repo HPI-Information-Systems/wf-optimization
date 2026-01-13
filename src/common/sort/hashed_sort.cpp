@@ -327,7 +327,7 @@ public:
 	ColumnDataAppendState unsorted_append;
 
 	struct MinContainer {
-		std::set<int32_t> values;
+		std::priority_queue<int32_t> values;
 		int32_t max_value{std::numeric_limits<int32_t>::min()};
 	};
 	std::unordered_map<hash_t, MinContainer> minima;
@@ -422,21 +422,21 @@ void HashedSortGlobalSinkState::UpdateLocalPartition(GroupingPartition &local_pa
 	//	Sync local partition to have the same bit count
 	SyncLocalPartition(local_partition, partition_append);
 
-	if (shrink_partitions)
-	for (const auto& [hash, values] : lstate.minima) {
-		const auto local_maximum = values.max_value;
-		auto it = minima.emplace(hash, local_maximum).first;
-		it->second = MinValue(it->second, local_maximum);
-	}
+	// if (shrink_partitions)
+	// for (const auto& [hash, values] : lstate.minima) {
+	// 	const auto local_maximum = values.max_value;
+	// 	auto it = minima.emplace(hash, local_maximum).first;
+	// 	it->second = MinValue(it->second, local_maximum);
+	// }
 
-	for (const auto& [hash, value] : minima) {
-		auto& local_minima = lstate.minima[hash];
-		local_minima.values.insert(value);
-		if (local_minima.values.size() > predicate_value) {
-			local_minima.values.erase(std::prev(local_minima.values.end()));
-			local_minima.max_value = *std::prev(local_minima.values.end());
-		}
-	}
+	// for (const auto& [hash, value] : minima) {
+	// 	auto& local_minima = lstate.minima[hash];
+	// 	local_minima.values.insert(value);
+	// 	if (local_minima.values.size() > predicate_value) {
+	// 		local_minima.values.erase(std::prev(local_minima.values.end()));
+	// 		local_minima.max_value = *std::prev(local_minima.values.end());
+	// 	}
+	// }
 }
 
 
@@ -583,7 +583,7 @@ SinkResultType HashedSort::Sink(ExecutionContext &context, DataChunk &input_chun
 			for (auto i = idx_t{0}; i < chunk_size; ++i) {
 				auto& local_minima = lstate.minima[hashes[i]];
 				if (local_minima.values.size() < value_count) {
-					local_minima.values.insert(sort_values[i]);
+					local_minima.values.push(sort_values[i]);
 					local_minima.max_value = MaxValue(local_minima.max_value, sort_values[i]);
 					selection.set_index(result_count++, i);
 					continue;
@@ -591,10 +591,10 @@ SinkResultType HashedSort::Sink(ExecutionContext &context, DataChunk &input_chun
 
 				if (sort_values[i] <= local_minima.max_value) {
 					selection.set_index(result_count++, i);
-					const auto inserted = local_minima.values.insert(sort_values[i]).second;
-					if (inserted) {
-						local_minima.values.erase(std::prev(local_minima.values.end()));
-						local_minima.max_value = *std::prev(local_minima.values.end());
+					local_minima.values.push(sort_values[i]);
+					if (local_minima.values.size() > value_count) {
+						local_minima.values.pop();
+						local_minima.max_value = local_minima.values.top();
 					}
 				}
 			}
