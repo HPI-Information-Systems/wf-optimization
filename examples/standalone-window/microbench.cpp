@@ -144,7 +144,7 @@ int main(int argc, char* argv[]) {
 			num_runs = 10;
 		}
 
-		std::cout << run_row_count << " rows, " << partition_count << " partitions, " << num_runs << " runs\n";
+		std::cout << run_row_count << " rows, " << partition_count << " partitions, " << num_runs << " executions\n";
 		const auto level_lower = uint8_t{0};
 		const auto level_upper = static_cast<uint8_t>(WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptive);
 
@@ -155,6 +155,9 @@ int main(int argc, char* argv[]) {
 
 		for (auto level_int = level_lower; level_int <= level_upper; ++level_int) {
 			const auto level = static_cast<WindowOperatorConfig::OptimizationLevel>(level_int);
+			if (level == WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsSimulated) {
+				continue;
+			}
 
 			const auto level_str = WindowOperatorConfig::optimization_level_to_str(level);
 

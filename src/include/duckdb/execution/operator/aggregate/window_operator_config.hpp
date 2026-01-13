@@ -26,7 +26,7 @@ class WindowOperatorConfig {
   bool shrink_partitions_adaptive{false};
   int64_t predicate_value{0};
   uint64_t expected_partitions{0};
-  double shrink_partitions_threshold{0.3};
+  double shrink_partitions_threshold{0.5};
 
   friend std::ostream& operator<<(std::ostream& stream, WindowOperatorConfig::OptimizationLevel level) {
   switch (level) {

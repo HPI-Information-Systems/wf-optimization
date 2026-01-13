@@ -109,10 +109,10 @@ int main(int argc, char* argv[]) {
 
     for (auto level_int = level_lower; level_int <= level_upper; ++level_int) {
         const auto level = static_cast<WindowOperatorConfig::OptimizationLevel>(level_int);
+        if (level == WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsSimulated) {
+                continue;
+        }
 
-        // if (level == WindowOperatorConfig::OptimizationLevel::ShrinkRuns) {
-        //     continue;
-        // }
         const auto level_str = WindowOperatorConfig::optimization_level_to_str(level);
 
         std::cout << "\n==============================\n" << level_str << "\n==============================\n";
