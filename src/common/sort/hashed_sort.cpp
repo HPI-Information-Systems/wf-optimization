@@ -5,6 +5,7 @@
 #include "duckdb/parallel/thread_context.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/execution/operator/aggregate/window_operator_config.hpp"
+#include "duckdb/common/types/hyperloglog.hpp"
 
 #include <iostream>
 
@@ -87,10 +88,6 @@ public:
 	idx_t max_bits;
 	atomic<idx_t> count;
 
-	std::unordered_map<hash_t, int32_t> minima;
-	uint64_t predicate_value;
-	bool shrink_partitions{false};
-
 private:
 	void Rehash(idx_t cardinality);
 	void SyncLocalPartition(GroupingPartition &local_partition, GroupingAppend &local_append);
@@ -122,9 +119,6 @@ HashedSortGlobalSinkState::HashedSortGlobalSinkState(ClientContext &client, cons
 			Rehash(hashed_sort.estimated_cardinality);
 		}
 	}
-
-	predicate_value = static_cast<uint64_t>(WindowOperatorConfig::get().predicate_value);
-	shrink_partitions = WindowOperatorConfig::get().shrink_partitions;
 }
 
 unique_ptr<RadixPartitionedTupleData> HashedSortGlobalSinkState::CreatePartition(idx_t new_bits) const {
@@ -332,6 +326,9 @@ public:
 	};
 	std::unordered_map<hash_t, MinContainer> minima;
 	idx_t local_partition_count{0};
+
+	HyperLogLog unique_partition_values;
+	idx_t hashed_tuples{0};
 };
 
 HashedSortLocalSinkState::HashedSortLocalSinkState(ExecutionContext &context, const HashedSort &hashed_sort)
@@ -393,8 +390,16 @@ void HashedSortLocalSinkState::Hash(DataChunk &input_chunk, Vector &hash_vector)
 	hash_exec.Execute(input_chunk, group_chunk);
 	VectorOperations::Hash(group_chunk.data[0], hash_vector, count);
 	if (WindowOperatorConfig::get().shrink_partitions_adaptive) {
-		local_partition_count = VectorOperations::HashAndCount(group_chunk.data[0], hash_vector, count);
-		// std::cout << std::to_string(local_partition_count) + "\n";
+		if (WindowOperatorConfig::get().use_adaptivity_context) {
+			VectorOperations::HashAndCount(group_chunk.data[0], hash_vector, count, unique_partition_values);
+			local_partition_count = unique_partition_values.Count();
+			hashed_tuples += input_chunk.size();
+			// std::cout << std::to_string(local_partition_count) + "\n";
+		} else {
+			auto current_unique_values = HyperLogLog{};
+			VectorOperations::HashAndCount(group_chunk.data[0], hash_vector, count, current_unique_values);
+			local_partition_count = current_unique_values.Count();
+		}
 	} else {
 		VectorOperations::Hash(group_chunk.data[0], hash_vector, count);
 	}
@@ -421,22 +426,6 @@ void HashedSortGlobalSinkState::UpdateLocalPartition(GroupingPartition &local_pa
 
 	//	Sync local partition to have the same bit count
 	SyncLocalPartition(local_partition, partition_append);
-
-	// if (shrink_partitions)
-	// for (const auto& [hash, values] : lstate.minima) {
-	// 	const auto local_maximum = values.max_value;
-	// 	auto it = minima.emplace(hash, local_maximum).first;
-	// 	it->second = MinValue(it->second, local_maximum);
-	// }
-
-	// for (const auto& [hash, value] : minima) {
-	// 	auto& local_minima = lstate.minima[hash];
-	// 	local_minima.values.insert(value);
-	// 	if (local_minima.values.size() > predicate_value) {
-	// 		local_minima.values.erase(std::prev(local_minima.values.end()));
-	// 		local_minima.max_value = *std::prev(local_minima.values.end());
-	// 	}
-	// }
 }
 
 
@@ -542,13 +531,20 @@ SinkResultType HashedSort::Sink(ExecutionContext &context, DataChunk &input_chun
 
 	auto &local_grouping = lstate.local_grouping;
 	auto &grouping_append = lstate.grouping_append;
-	// const auto old_radix_bits = local_grouping ? local_grouping->GetRadixBits() : 0;
 
+	auto adaptivity_skip = true;
 	const auto& config = WindowOperatorConfig::get();
-	if ((!config.simulate_shrink_partitions && !config.shrink_partitions)
-		|| (config.shrink_partitions_adaptive
-			&& static_cast<double>(lstate.local_partition_count * static_cast<idx_t>(config.predicate_value)) >
-			   static_cast<double>(input_chunk.size()) * config.shrink_partitions_threshold)) {
+	if (config.shrink_partitions_adaptive) {
+		const auto k = static_cast<idx_t>(config.predicate_value);
+		const auto required_tuples = lstate.local_partition_count * k;
+		if (config.use_adaptivity_context) {
+			adaptivity_skip = required_tuples > lstate.hashed_tuples;
+		} else {
+			adaptivity_skip = static_cast<double>(required_tuples) / static_cast<double>(input_chunk.size()) >
+			   config.shrink_partitions_threshold;
+		}
+	}
+	if ((!config.simulate_shrink_partitions && !config.shrink_partitions) || (config.shrink_partitions_adaptive && adaptivity_skip)) {
 		gstate.UpdateLocalPartition(local_grouping, grouping_append);
 		local_grouping->Append(*grouping_append, payload_chunk);
 
@@ -556,7 +552,6 @@ SinkResultType HashedSort::Sink(ExecutionContext &context, DataChunk &input_chun
 	}
 
 	auto selection = SelectionVector{};
-	// const auto chunk_size = input_chunk.size();
 	auto result_count = idx_t{0};
 	if (config.simulate_shrink_partitions) {
 		gstate.UpdateLocalPartition(local_grouping, grouping_append);
@@ -567,43 +562,33 @@ SinkResultType HashedSort::Sink(ExecutionContext &context, DataChunk &input_chun
 			selection.set_index(i, i);
 		}
 	} else {
-		//gstate.UpdateLocalPartition(local_grouping, grouping_append, lstate);
 		gstate.UpdateLocalPartition(local_grouping, grouping_append);
 		const auto sort_column = sort_ids[partitions.size()];
-		// const auto radix_bits = lstate.local_grouping->GetRadixBits();
-		// resolve_radix_bits(radix_bits, [&](const auto& constants){
-			// using Constants = std::decay_t<decltype(constants)>;
+		const auto value_count = static_cast<uint64_t>(config.predicate_value);
+		const auto chunk_size = input_chunk.size();
+		const auto hashes = FlatVector::GetData<const hash_t>(hash_vector);
+		const auto sort_values = FlatVector::GetData<const int32_t>(input_chunk.data[sort_column]);
 
-			const auto value_count = static_cast<uint64_t>(WindowOperatorConfig::get().predicate_value);
-			const auto chunk_size = input_chunk.size();
-			const auto hashes = FlatVector::GetData<const hash_t>(hash_vector);
-			const auto sort_values = FlatVector::GetData<const int32_t>(input_chunk.data[sort_column]);
-
-			selection.Initialize(chunk_size);
-			for (auto i = idx_t{0}; i < chunk_size; ++i) {
-				auto& local_minima = lstate.minima[hashes[i]];
-				if (local_minima.values.size() < value_count) {
-					local_minima.values.push(sort_values[i]);
-					local_minima.max_value = MaxValue(local_minima.max_value, sort_values[i]);
-					selection.set_index(result_count++, i);
-					continue;
-				}
-
-				if (sort_values[i] <= local_minima.max_value) {
-					selection.set_index(result_count++, i);
-					local_minima.values.push(sort_values[i]);
-					if (local_minima.values.size() > value_count) {
-						local_minima.values.pop();
-						local_minima.max_value = local_minima.values.top();
-					}
-				}
+		selection.Initialize(chunk_size);
+		for (auto i = idx_t{0}; i < chunk_size; ++i) {
+			auto& local_minima = lstate.minima[hashes[i]];
+			if (local_minima.values.size() < value_count) {
+				local_minima.values.push(sort_values[i]);
+				local_minima.max_value = MaxValue(local_minima.max_value, sort_values[i]);
+				selection.set_index(result_count++, i);
+				continue;
 			}
 
-		// });
+			if (sort_values[i] <= local_minima.max_value) {
+				selection.set_index(result_count++, i);
+				local_minima.values.push(sort_values[i]);
+				if (local_minima.values.size() > value_count) {
+					local_minima.values.pop();
+					local_minima.max_value = local_minima.values.top();
+				}
+			}
+		}
 	}
-
-	// input_chunk.Slice(selection, result_count);
-	// payload_chunk.Slice(selection, result_count);
 
 	local_grouping->Append(*grouping_append, payload_chunk, selection, result_count);
 

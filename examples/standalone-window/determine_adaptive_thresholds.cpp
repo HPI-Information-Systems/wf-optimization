@@ -52,7 +52,6 @@ std::string execute_command(const std::string& command) {
 
 
 int main(int argc, char* argv[]) {
-	auto row_count = size_t{1'000'000};
 	auto core_count = std::stoul(execute_command("nproc"));
 	auto skewed = false;
 	auto test = false;
@@ -65,8 +64,6 @@ int main(int argc, char* argv[]) {
 			skewed = true;
 		} else if (argument == "--test") {
 			test = true;
-		} else if (arg_id == 1) {
-			row_count = std::stoi(argument);
 		} else {
 			throw std::runtime_error("Unrecognized option: '" + argument + "'.");
 		}
@@ -88,56 +85,61 @@ int main(int argc, char* argv[]) {
 	};
 
 	auto file_names = std::vector<std::tuple<size_t, size_t, std::string>>{};
+	const auto row_counts = {100}; //, 1'000, 10'000, 100'000, 1'000'000, 10'000'000, 100'000'000};
+
 	if (!skewed) {
 		const auto partition_counts_base = size_t{10};
-		while (file_names.empty() || std::get<1>(file_names.back()) < row_count / partition_counts_base) {
-			const auto partition_count = file_names.empty() ? partition_counts_base : std::get<1>(file_names.back()) * partition_counts_base;
-			const auto filename = table_file_name(partition_count, row_count);
+		for (const auto row_count : row_counts) {
+			while (file_names.empty() || std::get<1>(file_names.back()) < row_count / partition_counts_base) {
+				const auto partition_count = file_names.empty() ? partition_counts_base : std::get<1>(file_names.back()) * partition_counts_base;
+				const auto filename = table_file_name(partition_count, row_count);
 
-			if (!fileExists(filename)) {
-				throw std::runtime_error("File '" + filename + "' does not exist!");
+				if (!fileExists(filename)) {
+					throw std::runtime_error("File '" + filename + "' does not exist!");
+				}
+
+				file_names.emplace_back(row_count, partition_count, filename);
 			}
-
-			file_names.emplace_back(row_count, partition_count, filename);
 		}
 	} else {
 		const auto path = std::filesystem::path{"data"};
-		for (const auto& entry : std::filesystem::directory_iterator(path)) {
-			if(!std::filesystem::is_regular_file(entry)) {
-				continue;
-			}
-			const auto filename = entry.path().filename().string();
-			if (filename.find("_skewed") == std::string::npos) {
-				continue;
+		for (const auto row_count : row_counts) {
+			for (const auto& entry : std::filesystem::directory_iterator(path)) {
+				if(!std::filesystem::is_regular_file(entry)) {
+					continue;
+				}
+				const auto filename = entry.path().filename().string();
+				if (filename.find("_skewed") == std::string::npos) {
+					continue;
+				}
+
+				auto row_count_match = std::smatch{};
+				if (!std::regex_search(filename, row_count_match, std::regex{"\\d+-rows"})) {
+					continue;
+				}
+				const auto file_row_count = std::stoul(row_count_match[0].str().substr(0, row_count_match[0].length() - 5));
+
+				auto partition_count_match = std::smatch{};
+				if (!std::regex_search(filename, partition_count_match, std::regex{"\\d+-partitions"})) {
+					continue;
+				}
+				const auto partition_count = std::stoul(partition_count_match[0].str().substr(0, partition_count_match[0].length() - 11));
+
+				file_names.emplace_back(file_row_count, partition_count, "data/" + filename);
 			}
 
-			auto row_count_match = std::smatch{};
-			if (!std::regex_search(filename, row_count_match, std::regex{"\\d+-rows"})) {
-				continue;
-			}
-			const auto file_row_count = std::stoul(row_count_match[0].str().substr(0, row_count_match[0].length() - 5));
-
-			auto partition_count_match = std::smatch{};
-			if (!std::regex_search(filename, partition_count_match, std::regex{"\\d+-partitions"})) {
-				continue;
-			}
-			const auto partition_count = std::stoul(partition_count_match[0].str().substr(0, partition_count_match[0].length() - 11));
-
-			file_names.emplace_back(file_row_count, partition_count, "data/" + filename);
+			std::sort(file_names.begin(), file_names.end(), [](const auto& lhs, const auto& rhs){
+				return std::get<0>(lhs) != std::get<0>(rhs) ? std::get<0>(lhs) < std::get<0>(rhs) : std::get<1>(lhs) < std::get<1>(rhs);
+			});
 		}
-
-		std::sort(file_names.begin(), file_names.end(), [](const auto& lhs, const auto& rhs){
-			return std::get<0>(lhs) != std::get<0>(rhs) ? std::get<0>(lhs) < std::get<0>(rhs) : std::get<1>(lhs) < std::get<1>(rhs);
-		});
 	}
+
 
 	auto ofstream = std::ofstream{};
-	if (!test) {
-		const auto result_filename = "microbenchmark_" + (skewed ? "skewed_" : std::to_string(row_count) + "-rows_") + (core_count == 1 ? "st" : "mt") + ".csv";
-		ofstream.open(result_filename);
-		ofstream << "CONFIGURATION,ROW_COUNT,PARTITION_COUNT,RESULTS_PER_PARTITION,RESULT_COUNT,RUNTIME_NS\n";
-		ofstream << std::fixed;
-	}
+	const auto result_filename = "adaptivity_thresholds_" + (skewed ? std::string{"skewed_"} : std::string{""}) + (core_count == 1 ? "st" : "mt") + ".csv";
+	ofstream.open(result_filename);
+	ofstream << "CONFIGURATION,ROW_COUNT,PARTITION_COUNT,RESULTS_PER_PARTITION,RESULT_COUNT,THRESHOLD,RUNTIME_MS\n";
+	ofstream << std::fixed;
 
 	const auto predicate_value = int64_t{3};
 	for (const auto& [run_row_count, partition_count, filename] : file_names) {
@@ -149,25 +151,23 @@ int main(int argc, char* argv[]) {
 			num_runs = 10;
 		}
 		if (test) {
-			num_runs = num_runs / 10;
+			num_runs = 1;
 		}
 
 		std::cout << run_row_count << " rows, " << partition_count << " partitions, " << num_runs << " executions\n";
 		const auto level_lower = uint8_t{0};
-		const auto level_upper = static_cast<uint8_t>(WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptiveContext);
+		const auto level_upper = static_cast<uint8_t>(WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptive);
 
 		con.BeginTransaction();
 		con.Query("create table eval (a int, b int, c int);");
 		con.Query("COPY eval FROM '" + filename + "' WITH (FORMAT CSV, DELIMITER ',', NULL '', QUOTE '\"');");
 		con.Commit();
 
-		for (auto level_int = level_lower; level_int <= level_upper; ++level_int) {
-			const auto level = static_cast<WindowOperatorConfig::OptimizationLevel>(level_int);
-			if (level == WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsSimulated) {
-				continue;
-			}
+		for (const auto level : {WindowOperatorConfig::OptimizationLevel::None, WindowOperatorConfig::OptimizationLevel::ShrinkPartitions, WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptive}) {
 
 			const auto level_str = WindowOperatorConfig::optimization_level_to_str(level);
+			const auto test_thresholds = level == WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptive;
+			const auto thresholds = test_thresholds ? std::vector<double>{0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7} : std::vector<double>{1.0};
 
 			const auto predicate_value = uint64_t{3};
 			const auto is_combined = level == WindowOperatorConfig::OptimizationLevel::Combined;
@@ -177,32 +177,38 @@ int main(int argc, char* argv[]) {
 			WindowOperatorConfig::get().shrink_runs = level == WindowOperatorConfig::OptimizationLevel::ShrinkRuns || is_combined;
 			WindowOperatorConfig::get().simulate_shrink_partitions = level == WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsSimulated;
 			WindowOperatorConfig::get().shrink_partitions = level >= WindowOperatorConfig::OptimizationLevel::ShrinkPartitions || is_combined;
-			WindowOperatorConfig::get().shrink_partitions_adaptive = level >= WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptive || is_combined;
-			WindowOperatorConfig::get().use_adaptivity_context = level >= WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptiveContext || is_combined;
+			WindowOperatorConfig::get().shrink_partitions_adaptive = test_thresholds || is_combined;
 			WindowOperatorConfig::get().expected_partitions = partition_count;
 
 			string query = WindowOperatorConfig::get().do_filter ?
 			 "SELECT * from (select a, b, rank() OVER (PARTITION BY a ORDER BY b) rnk FROM eval) t" :
 			  "SELECT * from (select a, b, rank() OVER (PARTITION BY a ORDER BY b) rnk FROM eval) t WHERE rnk <= " + std::to_string(predicate_value);
 
-			// One warm-up run.
-			const auto init_result_count = con.Query(query)->RowCount();
-			auto result_count = init_result_count;
-			auto run_durations = std::vector<std::chrono::nanoseconds>(num_runs);
-			const auto start = std::chrono::steady_clock::now();
-			for (auto run = 0; run < num_runs; ++run) {
-				const auto run_start = std::chrono::steady_clock::now();
-				result_count += con.Query(query)->RowCount();
-				run_durations[run] = std::chrono::steady_clock::now() - run_start;
-			}
+			for (const auto threshold : thresholds) {
+				WindowOperatorConfig::get().shrink_partitions_threshold = threshold;
 
-			const auto duration = std::chrono::steady_clock::now() - start;
-			std::cout << "\t" << level_str << "\t" << result_count << "\t" <<  std::chrono::duration<double, std::milli>{duration}.count() << " ms\n";
-			if (!test) {
-				for (const auto& run_duration : run_durations) {
-					//ofstream << "CONFIGURATION,ROW_COUNT,PARTITION_COUNT,RESULT_COUNT,RUNTIME_NS\n";
-					ofstream << level_str << "," << run_row_count << "," << partition_count << "," << predicate_value << "," << init_result_count << "," << run_duration.count() << "\n";
+				// One warm-up run.
+				const auto init_result_count = con.Query(query)->RowCount();
+				auto result_count = init_result_count;
+				auto run_duration_sum = std::chrono::nanoseconds{};
+				const auto start = std::chrono::steady_clock::now();
+				for (auto run = 0; run < num_runs; ++run) {
+					const auto run_start = std::chrono::steady_clock::now();
+					result_count += con.Query(query)->RowCount();
+					run_duration_sum += std::chrono::steady_clock::now() - run_start;
 				}
+
+				const auto duration = std::chrono::steady_clock::now() - start;
+				std::cout << "\t" << level_str;
+				if (level == WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptive) {
+					std::cout << " " << threshold;
+				}
+
+				std::cout << "\t" << result_count << "\t" << std::chrono::duration<double, std::milli>{duration}.count() << " ms\n";
+				const auto avg_duration = std::chrono::duration<double, std::milli>{run_duration_sum}.count() / num_runs;
+				// ofstream << CONFIGURATION,ROW_COUNT,PARTITION_COUNT,RESULTS_PER_PARTITION,RESULT_COUNT,THRESHOLD,RUNTIME_NS
+				ofstream << level_str << "," << run_row_count << "," << partition_count << "," << predicate_value << "," << init_result_count << ","  << threshold << "," << avg_duration << "\n";
+
 			}
 		}
 
@@ -212,8 +218,6 @@ int main(int argc, char* argv[]) {
 		std::cout << "\n";
 	}
 
-	if (!test) {
-		ofstream.close();
-	}
+	ofstream.close();
 
 }

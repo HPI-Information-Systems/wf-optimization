@@ -16,6 +16,7 @@
 namespace duckdb {
 class CastFunctionSet;
 struct GetCastFunctionInput;
+class HyperLogLog;
 
 // VectorOperations contains a set of operations that operate on sets of
 // vectors. In general, the operators must all have the same type, otherwise an
@@ -158,7 +159,7 @@ struct VectorOperations {
 	// hashes = HASH(input)
 	static void Hash(Vector &input, Vector &hashes, idx_t count);
 	static void Hash(Vector &input, Vector &hashes, const SelectionVector &rsel, idx_t count);
-	static idx_t HashAndCount(Vector &input, Vector &hashes, idx_t count);
+	static void HashAndCount(Vector &input, Vector &hashes, idx_t count, HyperLogLog& unique_values);
 	// hashes ^= HASH(input)
 	static void CombineHash(Vector &hashes, Vector &input, idx_t count);
 	static void CombineHash(Vector &hashes, Vector &input, const SelectionVector &rsel, idx_t count);

@@ -105,7 +105,7 @@ int main(int argc, char* argv[]) {
 
     std::cout << row_count << " rows, " << partition_count << " partitions\n";
     const auto level_lower = uint8_t{0};
-    const auto level_upper = static_cast<uint8_t>(WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptive);
+    const auto level_upper = static_cast<uint8_t>(WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptiveContext);
 
     for (auto level_int = level_lower; level_int <= level_upper; ++level_int) {
         const auto level = static_cast<WindowOperatorConfig::OptimizationLevel>(level_int);
@@ -150,6 +150,8 @@ int main(int argc, char* argv[]) {
         WindowOperatorConfig::get().simulate_shrink_partitions = level == WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsSimulated;
         WindowOperatorConfig::get().shrink_partitions = level >= WindowOperatorConfig::OptimizationLevel::ShrinkPartitions || is_combined;
         WindowOperatorConfig::get().shrink_partitions_adaptive = level >= WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptive || is_combined;
+        WindowOperatorConfig::get().use_adaptivity_context = level >= WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptiveContext || is_combined;
+
         WindowOperatorConfig::get().expected_partitions = partition_count;
 
         string query = WindowOperatorConfig::get().do_filter ?

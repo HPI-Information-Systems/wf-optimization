@@ -7,7 +7,7 @@ namespace duckdb {
 
 class WindowOperatorConfig {
  public:
-  enum class OptimizationLevel : uint8_t { None, Filter, EarlyOut, ShrinkRuns, ShrinkPartitionsSimulated, ShrinkPartitions, ShrinkPartitionsAdaptive, Combined };
+  enum class OptimizationLevel : uint8_t { None, Filter, EarlyOut, ShrinkRuns, ShrinkPartitionsSimulated, ShrinkPartitions, ShrinkPartitionsAdaptive, ShrinkPartitionsAdaptiveContext, Combined };
 
   inline static WindowOperatorConfig& get() {
     static auto instance = WindowOperatorConfig{};
@@ -24,6 +24,7 @@ class WindowOperatorConfig {
   bool shrink_partitions{false};
   bool simulate_shrink_partitions{false};
   bool shrink_partitions_adaptive{false};
+  bool use_adaptivity_context{false};
   int64_t predicate_value{0};
   uint64_t expected_partitions{0};
   double shrink_partitions_threshold{0.5};
@@ -50,6 +51,9 @@ class WindowOperatorConfig {
       break;
     case WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptive:
       stream << "ShrinkPartitionsAdaptive";
+      break;
+    case WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptiveContext:
+      stream << "ShrinkPartitionsAdaptiveContext";
       break;
     case WindowOperatorConfig::OptimizationLevel::Combined:
       stream << "Combined";
