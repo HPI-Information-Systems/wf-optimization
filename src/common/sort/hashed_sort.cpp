@@ -536,12 +536,13 @@ SinkResultType HashedSort::Sink(ExecutionContext &context, DataChunk &input_chun
 	const auto& config = WindowOperatorConfig::get();
 	if (config.shrink_partitions_adaptive) {
 		const auto k = static_cast<idx_t>(config.predicate_value);
-		const auto required_tuples = lstate.local_partition_count * k;
+		const auto required_tuples = static_cast<double>(lstate.local_partition_count * k);
+		const auto threshold = config.shrink_partitions_threshold;
 		if (config.use_adaptivity_context) {
-			adaptivity_skip = required_tuples > lstate.hashed_tuples;
+			adaptivity_skip = required_tuples / static_cast<double>(lstate.hashed_tuples) > threshold;
 		} else {
 			adaptivity_skip = static_cast<double>(required_tuples) / static_cast<double>(input_chunk.size()) >
-			   config.shrink_partitions_threshold;
+			   threshold;
 		}
 	}
 	if ((!config.simulate_shrink_partitions && !config.shrink_partitions) || (config.shrink_partitions_adaptive && adaptivity_skip)) {

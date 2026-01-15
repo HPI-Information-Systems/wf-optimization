@@ -27,12 +27,12 @@ class WindowOperatorConfig {
   bool use_adaptivity_context{false};
   int64_t predicate_value{0};
   uint64_t expected_partitions{0};
-  double shrink_partitions_threshold{0.5};
+  double shrink_partitions_threshold{1.0};
 
   friend std::ostream& operator<<(std::ostream& stream, WindowOperatorConfig::OptimizationLevel level) {
   switch (level) {
     case WindowOperatorConfig::OptimizationLevel::None:
-      stream << "None";
+      stream << "Baseline";
       break;
     case WindowOperatorConfig::OptimizationLevel::Filter:
       stream << "Filter";

@@ -85,7 +85,7 @@ int main(int argc, char* argv[]) {
 	};
 
 	auto file_names = std::vector<std::tuple<size_t, size_t, std::string>>{};
-	const auto row_counts = {100}; //, 1'000, 10'000, 100'000, 1'000'000, 10'000'000, 100'000'000};
+	const auto row_counts = {10'000, 100'000, 1'000'000, 10'000'000, 100'000'000};
 
 	if (!skewed) {
 		const auto partition_counts_base = size_t{10};
@@ -103,35 +103,33 @@ int main(int argc, char* argv[]) {
 		}
 	} else {
 		const auto path = std::filesystem::path{"data"};
-		for (const auto row_count : row_counts) {
-			for (const auto& entry : std::filesystem::directory_iterator(path)) {
-				if(!std::filesystem::is_regular_file(entry)) {
-					continue;
-				}
-				const auto filename = entry.path().filename().string();
-				if (filename.find("_skewed") == std::string::npos) {
-					continue;
-				}
-
-				auto row_count_match = std::smatch{};
-				if (!std::regex_search(filename, row_count_match, std::regex{"\\d+-rows"})) {
-					continue;
-				}
-				const auto file_row_count = std::stoul(row_count_match[0].str().substr(0, row_count_match[0].length() - 5));
-
-				auto partition_count_match = std::smatch{};
-				if (!std::regex_search(filename, partition_count_match, std::regex{"\\d+-partitions"})) {
-					continue;
-				}
-				const auto partition_count = std::stoul(partition_count_match[0].str().substr(0, partition_count_match[0].length() - 11));
-
-				file_names.emplace_back(file_row_count, partition_count, "data/" + filename);
+		for (const auto& entry : std::filesystem::directory_iterator(path)) {
+			if(!std::filesystem::is_regular_file(entry)) {
+				continue;
+			}
+			const auto filename = entry.path().filename().string();
+			if (filename.find("_skewed") == std::string::npos) {
+				continue;
 			}
 
-			std::sort(file_names.begin(), file_names.end(), [](const auto& lhs, const auto& rhs){
-				return std::get<0>(lhs) != std::get<0>(rhs) ? std::get<0>(lhs) < std::get<0>(rhs) : std::get<1>(lhs) < std::get<1>(rhs);
-			});
+			auto row_count_match = std::smatch{};
+			if (!std::regex_search(filename, row_count_match, std::regex{"\\d+-rows"})) {
+				continue;
+			}
+			const auto file_row_count = std::stoul(row_count_match[0].str().substr(0, row_count_match[0].length() - 5));
+
+			auto partition_count_match = std::smatch{};
+			if (!std::regex_search(filename, partition_count_match, std::regex{"\\d+-partitions"})) {
+				continue;
+			}
+			const auto partition_count = std::stoul(partition_count_match[0].str().substr(0, partition_count_match[0].length() - 11));
+
+			file_names.emplace_back(file_row_count, partition_count, "data/" + filename);
 		}
+
+		std::sort(file_names.begin(), file_names.end(), [](const auto& lhs, const auto& rhs){
+			return std::get<0>(lhs) != std::get<0>(rhs) ? std::get<0>(lhs) < std::get<0>(rhs) : std::get<1>(lhs) < std::get<1>(rhs);
+		});
 	}
 
 
@@ -163,11 +161,16 @@ int main(int argc, char* argv[]) {
 		con.Query("COPY eval FROM '" + filename + "' WITH (FORMAT CSV, DELIMITER ',', NULL '', QUOTE '\"');");
 		con.Commit();
 
-		for (const auto level : {WindowOperatorConfig::OptimizationLevel::None, WindowOperatorConfig::OptimizationLevel::ShrinkPartitions, WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptive}) {
+		for (const auto level : {WindowOperatorConfig::OptimizationLevel::None, WindowOperatorConfig::OptimizationLevel::ShrinkPartitions, WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptive, WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptiveContext}) {
 
 			const auto level_str = WindowOperatorConfig::optimization_level_to_str(level);
-			const auto test_thresholds = level == WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptive;
-			const auto thresholds = test_thresholds ? std::vector<double>{0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7} : std::vector<double>{1.0};
+			const auto test_thresholds = level >= WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptive;
+			auto thresholds = test_thresholds ? std::vector<double>{0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3} : std::vector<double>{1.0};
+			if (level == WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptive) {
+				thresholds.push_back(1.5);
+				thresholds.push_back(2.0);
+				thresholds.push_back(3.0);
+			}
 
 			const auto predicate_value = uint64_t{3};
 			const auto is_combined = level == WindowOperatorConfig::OptimizationLevel::Combined;
@@ -178,6 +181,7 @@ int main(int argc, char* argv[]) {
 			WindowOperatorConfig::get().simulate_shrink_partitions = level == WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsSimulated;
 			WindowOperatorConfig::get().shrink_partitions = level >= WindowOperatorConfig::OptimizationLevel::ShrinkPartitions || is_combined;
 			WindowOperatorConfig::get().shrink_partitions_adaptive = test_thresholds || is_combined;
+			WindowOperatorConfig::get().use_adaptivity_context = level >= WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptiveContext || is_combined;
 			WindowOperatorConfig::get().expected_partitions = partition_count;
 
 			string query = WindowOperatorConfig::get().do_filter ?
@@ -200,8 +204,8 @@ int main(int argc, char* argv[]) {
 
 				const auto duration = std::chrono::steady_clock::now() - start;
 				std::cout << "\t" << level_str;
-				if (level == WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptive) {
-					std::cout << " " << threshold;
+				if (test_thresholds) {
+					std::cout << " " << WindowOperatorConfig::get().shrink_partitions_threshold;
 				}
 
 				std::cout << "\t" << result_count << "\t" << std::chrono::duration<double, std::milli>{duration}.count() << " ms\n";
