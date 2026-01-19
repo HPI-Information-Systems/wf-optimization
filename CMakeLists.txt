@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.5...3.29)
 
+message("Compiler: ${CMAKE_CXX_COMPILER}")
+
 if(NOT CLANG_TIDY)
   find_package(Python3)
 endif()

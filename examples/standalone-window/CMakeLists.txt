@@ -14,6 +14,8 @@ else()
 	link_directories(../../build/debug/src)
 endif()
 
+message("Compiler: ${CMAKE_CXX_COMPILER}")
+
 include_directories(../../extension/core_functions)
 
 add_executable(microbench microbench.cpp)
@@ -24,3 +26,6 @@ target_link_libraries(playground duckdb)
 
 add_executable(adaptive_strategy determine_adaptive_thresholds.cpp)
 target_link_libraries(adaptive_strategy duckdb)
+
+add_executable(adaptive_strategy_ext determine_adaptive_thresholds_ext.cpp)
+target_link_libraries(adaptive_strategy_ext duckdb)
