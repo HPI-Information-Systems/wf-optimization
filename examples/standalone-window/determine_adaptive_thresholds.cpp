@@ -50,7 +50,6 @@ std::string execute_command(const std::string& command) {
 	return result;
 }
 
-
 int main(int argc, char* argv[]) {
 	auto core_count = std::stoul(execute_command("nproc"));
 	auto skewed = false;
@@ -90,8 +89,8 @@ int main(int argc, char* argv[]) {
 	if (!skewed) {
 		const auto partition_counts_base = size_t{10};
 		for (const auto row_count : row_counts) {
-			while (file_names.empty() || std::get<1>(file_names.back()) < row_count / partition_counts_base) {
-				const auto partition_count = file_names.empty() ? partition_counts_base : std::get<1>(file_names.back()) * partition_counts_base;
+			auto partition_count = partition_counts_base;
+			while (partition_count < row_count) {
 				const auto filename = table_file_name(partition_count, row_count);
 
 				if (!fileExists(filename)) {
@@ -99,6 +98,7 @@ int main(int argc, char* argv[]) {
 				}
 
 				file_names.emplace_back(row_count, partition_count, filename);
+				partition_count *= partition_counts_base;
 			}
 		}
 	} else {
@@ -194,12 +194,12 @@ int main(int argc, char* argv[]) {
 				// One warm-up run.
 				const auto init_result_count = con.Query(query)->RowCount();
 				auto result_count = init_result_count;
-				auto run_duration_sum = std::chrono::nanoseconds{};
+				auto run_durations = std::vector<std::chrono::nanoseconds>{};
 				const auto start = std::chrono::steady_clock::now();
 				for (auto run = 0; run < num_runs; ++run) {
 					const auto run_start = std::chrono::steady_clock::now();
 					result_count += con.Query(query)->RowCount();
-					run_duration_sum += std::chrono::steady_clock::now() - run_start;
+					run_durations.push_back(std::chrono::steady_clock::now() - run_start);
 				}
 
 				const auto duration = std::chrono::steady_clock::now() - start;
@@ -209,9 +209,11 @@ int main(int argc, char* argv[]) {
 				}
 
 				std::cout << "\t" << result_count << "\t" << std::chrono::duration<double, std::milli>{duration}.count() << " ms\n";
-				const auto avg_duration = std::chrono::duration<double, std::milli>{run_duration_sum}.count() / num_runs;
-				// ofstream << CONFIGURATION,ROW_COUNT,PARTITION_COUNT,RESULTS_PER_PARTITION,RESULT_COUNT,THRESHOLD,RUNTIME_NS
-				ofstream << level_str << "," << run_row_count << "," << partition_count << "," << predicate_value << "," << init_result_count << ","  << threshold << "," << avg_duration << "\n";
+				for (const auto& duration : run_durations) {
+					const auto duration_milli = std::chrono::duration<double, std::milli>{duration};
+					// ofstream << CONFIGURATION,ROW_COUNT,PARTITION_COUNT,RESULTS_PER_PARTITION,RESULT_COUNT,THRESHOLD,RUNTIME_NS
+					ofstream << level_str << "," << run_row_count << "," << partition_count << "," << predicate_value << "," << init_result_count << ","  << threshold << "," << duration_milli.count() << "\n";
+				}
 
 			}
 		}
