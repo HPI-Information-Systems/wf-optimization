@@ -163,7 +163,8 @@ int main(int argc, char* argv[]) {
 
 		for (auto level_int = level_lower; level_int <= level_upper; ++level_int) {
 			const auto level = static_cast<WindowOperatorConfig::OptimizationLevel>(level_int);
-			if (level == WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsSimulated) {
+			if (level == WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsSimulated
+				|| level == WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptive) {
 				continue;
 			}
 

@@ -2,12 +2,23 @@
 
 #include <string>
 #include <sstream>
+#include <stdexcept>
 
 namespace duckdb {
 
 class WindowOperatorConfig {
  public:
-  enum class OptimizationLevel : uint8_t { None, Filter, EarlyOut, ShrinkRuns, ShrinkPartitionsSimulated, ShrinkPartitions, ShrinkPartitionsAdaptive, ShrinkPartitionsAdaptiveContext, Combined };
+  enum class OptimizationLevel : uint8_t {
+    None,
+    Filter,
+    EarlyOut,
+    ShrinkRuns,
+    ShrinkPartitionsSimulated,
+    ShrinkPartitions,
+    ShrinkPartitionsAdaptive,
+    ShrinkPartitionsAdaptiveContext,
+    Combined
+  };
 
   inline static WindowOperatorConfig& get() {
     static auto instance = WindowOperatorConfig{};
@@ -27,7 +38,7 @@ class WindowOperatorConfig {
   bool use_adaptivity_context{false};
   int64_t predicate_value{0};
   uint64_t expected_partitions{0};
-  double shrink_partitions_threshold{1.0};
+  double shrink_partitions_threshold{0.2};
 
   friend std::ostream& operator<<(std::ostream& stream, WindowOperatorConfig::OptimizationLevel level) {
   switch (level) {
@@ -62,10 +73,21 @@ class WindowOperatorConfig {
   return stream;
 }
 
- static std::string optimization_level_to_str(WindowOperatorConfig::OptimizationLevel level) {
+ static std::string optimization_level_to_str(OptimizationLevel level) {
   auto stream = std::stringstream{};
   stream << level;
   return stream.str();
+}
+
+static OptimizationLevel str_to_optimization_level(const std::string& level_str) {
+  for (auto i = uint8_t{0}; i < static_cast<uint8_t>(OptimizationLevel::Combined); ++i) {
+    const auto level = static_cast<OptimizationLevel>(i);
+    if (optimization_level_to_str(level) == level_str) {
+      return level;
+    }
+  }
+
+  throw std::runtime_error("Unknown optimization level: '" + level_str + "'.");
 }
 
  protected:

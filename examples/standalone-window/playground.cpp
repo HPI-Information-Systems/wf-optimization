@@ -49,6 +49,9 @@ int main(int argc, char* argv[]) {
     auto core_count = std::stoul(execute_command("nproc"));
     auto randomized = false;
     auto verbose = false;
+    auto num_runs = size_t{1};
+    auto requested_level = std::optional<WindowOperatorConfig::OptimizationLevel>{};
+    auto warmup = false;
 
     for (auto arg_id = 1; arg_id < argc; ++arg_id) {
         const auto argument = std::string{argv[arg_id]};
@@ -58,6 +61,12 @@ int main(int argc, char* argv[]) {
             randomized = true;
         } else if (argument == "--verbose") {
             verbose = true;
+        } else if (argument == "--runs" or argument == "-r") {
+            num_runs = std::stoul(std::string{argv[++arg_id]});
+        } else if (argument == "--level" or argument == "-l") {
+            requested_level = WindowOperatorConfig::str_to_optimization_level(std::string{argv[++arg_id]});
+        } else if (argument == "--warmup" or argument == "-w") {
+            warmup = true;
         } else if (arg_id == 1) {
             row_count = std::stoul(argument);
         } else if (arg_id == 2) {
@@ -90,7 +99,6 @@ int main(int argc, char* argv[]) {
     }
 
     // std::cout << "== Import data ==\n";
-    constexpr auto num_runs = 1; //'000;
 
     const auto predicate_value = uint64_t{3};
 
@@ -104,12 +112,17 @@ int main(int argc, char* argv[]) {
 
 
     std::cout << row_count << " rows, " << partition_count << " partitions\n";
-    const auto level_lower = uint8_t{0};
-    const auto level_upper = static_cast<uint8_t>(WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptiveContext);
+    auto level_lower = uint8_t{0};
+    auto level_upper = static_cast<uint8_t>(WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptiveContext);
+    if (requested_level) {
+        level_lower = static_cast<uint8_t>(*requested_level);
+        level_upper = static_cast<uint8_t>(*requested_level);
+    }
 
     for (auto level_int = level_lower; level_int <= level_upper; ++level_int) {
         const auto level = static_cast<WindowOperatorConfig::OptimizationLevel>(level_int);
-        if (level == WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsSimulated) {
+        if (level == WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsSimulated
+            || level == WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptive) {
                 continue;
         }
 
@@ -163,6 +176,9 @@ int main(int argc, char* argv[]) {
         // auto result_count = con.Query(query)->RowCount();
         auto result_count = 0;
         auto run_durations = std::vector<std::chrono::nanoseconds>(num_runs);
+        if (warmup) {
+            con.Query(query);
+        }
         const auto start = std::chrono::steady_clock::now();
         for (auto run = 0; run < num_runs; ++run) {
             const auto result = con.Query(query);
