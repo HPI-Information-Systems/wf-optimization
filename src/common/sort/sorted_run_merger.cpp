@@ -164,8 +164,13 @@ private:
 	Vector sort_key_pointers;
 	SortedRunScanState sorted_run_scan_state;
 
-	std::optional<unsafe_vector<idx_t>> pos_list;
-	unsafe_vector<idx_t>::const_iterator pos_list_it;
+	uint64_t predicate{static_cast<uint64_t>(WindowOperatorConfig::get().predicate_value)};
+	bool use_skip{false};
+	uint64_t partition;
+	uint64_t order_by;
+	idx_t order_by_count;
+	idx_t current_pos;
+	idx_t last_match;
 };
 
 //===--------------------------------------------------------------------===//
@@ -652,7 +657,7 @@ void SortedRunMergerLocalState::TemplatedMergePartition(SortedRunMergerGlobalSta
 	merged_partition_index = 0;
 
 	idx_t active_runs = 0;
-	pos_list.reset();
+	use_skip = false;
 
 	// std::cout << "TemplatedMergePartition " << gstate.num_runs << " runs, " << run_boundaries.size() << " boundaries, " << states.size() << " states \n";
 	for (idx_t run_idx = 0; run_idx < gstate.num_runs; run_idx++) {
@@ -677,15 +682,9 @@ void SortedRunMergerLocalState::TemplatedMergePartition(SortedRunMergerGlobalSta
 		}
 	}
 
-		// auto msg = std::stringstream{};
-		// msg << "SortedRunMergerLocalState::TemplatedMergePartition: " + std::to_string(active_runs) + " runs, " + std::to_string(merged_partition_count) + " rows";
-
 	if (active_runs == 1 || gstate.merger.is_index_sort) {
-			// std::cout << msg.str() + " (skip sort)\n";
 		return; // Only one active run, no need to sort (or index sort, which is approximate sorting)
 	}
-
-	// std::cout << "\tsort\n";
 
 	// Seems counter-intuitive to re-sort instead of merging, but modern sorting algorithms detect and merge
 	static const auto fallback = [](SORT_KEY *begin, SORT_KEY *end) {
@@ -695,42 +694,15 @@ void SortedRunMergerLocalState::TemplatedMergePartition(SortedRunMergerGlobalSta
 	                            std::less<SORT_KEY>(), fallback);
 
 	if constexpr (std::is_same_v<STATE, FilteredBlockIteratorState> && SORT_KEY_TYPE == SortKeyType::NO_PAYLOAD_FIXED_16) {
-		pos_list.emplace();
-		pos_list->reserve(merged_partition_count);
-		const auto predicate = static_cast<uint64_t>(WindowOperatorConfig::get().predicate_value);
-
-		auto partition = merged_partition_keys[0].part0;
-		auto order_by = merged_partition_keys[0].part1;
-		auto order_by_count = idx_t{1};
-		auto i = idx_t{0};
-		auto last_match = idx_t{0};
-		for (auto i = idx_t{0}; i < merged_partition_count; ++i) {
-			const auto& current_key = merged_partition_keys[i];
-			if (current_key.part0 != partition) {
-				partition = current_key.part0;
-				order_by = current_key.part1;
-				order_by_count = 1;
-				pos_list->push_back(i);
-				last_match = i;
-				continue;
-			}
-
-			if (current_key.part0 != order_by && order_by_count <= predicate) {
-				++order_by_count;
-				pos_list->push_back(i);
-				last_match = i;
-				continue;
-			}
-		}
-
-		pos_list_it = pos_list->cbegin();
+		use_skip = true;
+		partition = 0;
+		order_by = 0;
+		order_by_count = 0;
 	}
-
-	// std::cout << msg.str() + " (sort)\n";
 }
 
 void SortedRunMergerLocalState::ScanPartition(SortedRunMergerGlobalState &gstate, DataChunk &chunk) {
-	resolve_pos_list(pos_list.has_value(), [&](const auto has_pos_list) {
+	resolve_pos_list(use_skip, [&](const auto has_pos_list) {
 		constexpr bool HAS_POS_LIST = decltype(has_pos_list)::value;
 		switch (sort_key_type) {
 		case SortKeyType::NO_PAYLOAD_FIXED_8:
@@ -766,8 +738,7 @@ void SortedRunMergerLocalState::TemplatedScanPartition(SortedRunMergerGlobalStat
 	const auto merged_partition_keys = reinterpret_cast<SORT_KEY *>(merged_partition.get()) + merged_partition_index;
 	const auto sort_keys = FlatVector::GetData<SORT_KEY *>(sort_key_pointers);
 
-	auto count = idx_t{0};
-	if constexpr (!HAS_POS_LIST) {
+	if constexpr (!(HAS_POS_LIST && SORT_KEY_TYPE == SortKeyType::NO_PAYLOAD_FIXED_16)) {
 		const auto count = MinValue<idx_t>(merged_partition_count - merged_partition_index, STANDARD_VECTOR_SIZE);
 		for (idx_t i = 0; i < count; i++) {
 			sort_keys[i] = &merged_partition_keys[i];
@@ -778,11 +749,62 @@ void SortedRunMergerLocalState::TemplatedScanPartition(SortedRunMergerGlobalStat
 		sorted_run_scan_state.Scan(*gstate.merger.sorted_runs[0], sort_key_pointers, count, chunk);
 
 	} else {
-		const auto count = MinValue<idx_t>(static_cast<idx_t>(pos_list->cend() - pos_list_it), STANDARD_VECTOR_SIZE);
-		for (idx_t i = 0; i < count; i++) {
-			sort_keys[i] = &merged_partition_keys[*pos_list_it];
-			++pos_list_it;
+		// const auto count = MinValue<idx_t>(static_cast<idx_t>(pos_list->cend() - pos_list_it), STANDARD_VECTOR_SIZE);
+		// for (idx_t i = 0; i < count; i++) {
+		// 	sort_keys[i] = &merged_partition_keys[*pos_list_it];
+		// 	++pos_list_it;
+		// }
+
+		// auto msg = std::stringstream{};
+		// Grab pointers to sort keys
+		// const auto merged_partition_keys = reinterpret_cast<SORT_KEY *>(merged_partition.get() + current_pos);
+
+		// const auto range = MinValue<idx_t>(merged_partition_count - current_pos, STANDARD_VECTOR_SIZE);
+		const auto end = merged_partition_count - merged_partition_index;
+		auto count = idx_t{0};
+		const auto begin = merged_partition_index;
+
+		// auto keys = std::set<SORT_KEY>{};
+		// auto keys_vec = std::vector<SORT_KEY>{};
+		auto i = idx_t{0};
+		auto is_begin = merged_partition_index == 0;
+
+
+		for (; i < end && count < STANDARD_VECTOR_SIZE ; ++i) {
+			auto msg = std::stringstream{};
+			// msg << current_pos << "\t" << i << "\t" << merged_partition_count << "\t" << range << "\t" << end << "\n";
+			// std::cout << msg.str();
+			if ((is_begin && i == 0) || merged_partition_keys[i].part0 != partition) {
+				partition = merged_partition_keys[i].part0;
+				order_by = merged_partition_keys[i].part1;
+				order_by_count = 1;
+				sort_keys[count] = &merged_partition_keys[i];
+				// keys.insert(merged_partition_keys[i]);
+				// keys_vec.push_back(merged_partition_keys[i]);
+				// last_match = current_pos;
+				++count;
+				continue;
+			}
+
+			const auto same_order = merged_partition_keys[i].part1 == order_by;
+			if (same_order || (!same_order && order_by_count < predicate)) {
+				order_by_count += static_cast<idx_t>(!same_order);
+				order_by = merged_partition_keys[i].part1;
+				sort_keys[count] = &merged_partition_keys[i];
+				// keys.insert(merged_partition_keys[i]);
+				// keys_vec.push_back(merged_partition_keys[i]);
+				// last_match = current_pos;
+				++count;
+				continue;
+			}
 		}
+		// if (i > 1) {
+		// 	current_pos += i-1;
+		// }
+		merged_partition_index += i;
+
+		// msg << merged_partition_count << "\t" << begin << "\t" << end << "\t" << merged_partition_index << "\t" << count  << "\t" << keys.size() << "\t" << keys_vec.size() <<  "\n";
+		// std::cout << msg.str();
 
 		// Scan
 		sorted_run_scan_state.Scan(*gstate.merger.sorted_runs[0], sort_key_pointers, count, chunk);

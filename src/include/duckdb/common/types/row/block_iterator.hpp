@@ -398,7 +398,7 @@ public:
 	using STATE = FilteredBlockIteratorState;
 
 public:
-	explicit filtered_block_iterator_t(STATE &state_p) : state(&state_p), block_or_chunk_idx(0), tuple_idx(0), offsets_it(++state_p.offsets.cbegin()) {
+	explicit filtered_block_iterator_t(STATE &state_p) : state(&state_p), block_or_chunk_idx(0), tuple_idx(0), offsets_it(state_p.offsets.cbegin()) {
 	}
 
 	explicit filtered_block_iterator_t()
@@ -408,8 +408,8 @@ public:
 	}
 
 	filtered_block_iterator_t(STATE &state_p, const idx_t &index) : state(&state_p) { // NOLINT: uninitialized on purpose
-		state->RandomAccess(block_or_chunk_idx, tuple_idx, index);
-		offsets_it = ++state_p.offsets.cbegin() + static_cast<offsets_it_t::difference_type>(index);
+		offsets_it = state_p.offsets.cbegin() + static_cast<offsets_it_t::difference_type>(index);
+		state->RandomAccess(block_or_chunk_idx, tuple_idx, *offsets_it);
 	}
 
 	filtered_block_iterator_t(STATE &state_p, const idx_t &block_idx_p, const idx_t &tuple_idx_p, const offsets_it_t& offsets_it_p)
@@ -441,8 +441,10 @@ public:
 
 	//! Prefix and postfix increment and decrement
 	filtered_block_iterator_t &operator++() {
-		state->Add(block_or_chunk_idx, tuple_idx, *offsets_it);
+		const auto current = *offsets_it;
 		++offsets_it;
+		const auto diff = *offsets_it - current;
+		state->Add(block_or_chunk_idx, tuple_idx, diff);
 		return *this;
 	}
 	filtered_block_iterator_t operator++(int) {
@@ -451,8 +453,10 @@ public:
 		return tmp;
 	}
 	filtered_block_iterator_t &operator--() {
+		const auto current = *offsets_it;
 		--offsets_it;
-		state->Subtract(block_or_chunk_idx, tuple_idx, *offsets_it);
+		const auto diff = current - *offsets_it;
+		state->Subtract(block_or_chunk_idx, tuple_idx, diff);
 		return *this;
 	}
 	filtered_block_iterator_t operator--(int) {
@@ -463,56 +467,42 @@ public:
 
 	//! Random access
 	filtered_block_iterator_t &operator+=(const difference_type &n) {
-		auto n_internal = idx_t{0};
-		for (auto i = idx_t{0}; i < n; ++i) {
-			n_internal += *offsets_it;
-			++offsets_it;
-		}
-		state->Add(block_or_chunk_idx, tuple_idx, n_internal);
+		const auto current = *offsets_it;
+		offsets_it += n;
+		const auto diff = *offsets_it - current;
+		state->Add(block_or_chunk_idx, tuple_idx, diff);
 		return *this;
 	}
 	filtered_block_iterator_t &operator-=(const difference_type &n) {
-		auto n_internal = idx_t{0};
-		for (auto i = idx_t{0}; i < n; ++i) {
-			--offsets_it;
-			n_internal += *offsets_it;
-		}
-		state->Subtract(block_or_chunk_idx, tuple_idx, n_internal);
+		const auto current = *offsets_it;
+		offsets_it -= n;
+		const auto diff = current - *offsets_it;
+		state->Subtract(block_or_chunk_idx, tuple_idx, diff);
 		return *this;
 	}
 	filtered_block_iterator_t operator+(const difference_type &n) const {
-		auto n_internal = idx_t{0};
-		auto offsets_internal = offsets_it;
-		for (auto i = idx_t{0}; i < n; ++i) {
-			n_internal += *offsets_internal;
-			++offsets_internal;
-		}
+		const auto current = *offsets_it;
+		const auto new_it = offsets_it + n;
+		const auto diff = *new_it - current;
+
 		idx_t new_block_or_chunk_idx = block_or_chunk_idx;
 		idx_t new_tuple_idx = tuple_idx;
-		state->Add(new_block_or_chunk_idx, new_tuple_idx, n_internal);
-		return filtered_block_iterator_t(*state, new_block_or_chunk_idx, new_tuple_idx, offsets_it);
+		state->Add(new_block_or_chunk_idx, new_tuple_idx, diff);
+		return filtered_block_iterator_t(*state, new_block_or_chunk_idx, new_tuple_idx, new_it);
 	}
 	filtered_block_iterator_t operator-(const difference_type &n) const {
-		auto n_internal = idx_t{0};
-		auto offsets_internal = offsets_it;
-		for (auto i = idx_t{0}; i < n; ++i) {
-			--offsets_internal;
-			n_internal += *offsets_internal;
-		}
+		const auto current = *offsets_it;
+		const auto new_it = offsets_it - n;
+		const auto diff = current - *new_it;
+
 		idx_t new_block_or_chunk_idx = block_or_chunk_idx;
 		idx_t new_tuple_idx = tuple_idx;
-		state->Subtract(new_block_or_chunk_idx, new_tuple_idx, n_internal);
-		return filtered_block_iterator_t(*state, new_block_or_chunk_idx, new_tuple_idx, offsets_it);
+		state->Subtract(new_block_or_chunk_idx, new_tuple_idx, diff);
+		return filtered_block_iterator_t(*state, new_block_or_chunk_idx, new_tuple_idx, new_it);
 	}
 
 	reference operator[](const difference_type &n) const {
-		auto begin = state->offsets.cbegin();
-		auto n_internal = idx_t{0};
-		for (auto i = idx_t{0}; i <= n; ++i) {
-			n_internal += *begin;
-			++begin;
-		}
-		return state->template GetValueAtIndex<T>(n_internal);
+		return state->template GetValueAtIndex<T>(state->offsets[n]);
 	}
 
 	//! Difference between iterators

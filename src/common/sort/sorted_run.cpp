@@ -345,19 +345,19 @@ static void TemplatedSort(ClientContext &context, const TupleDataCollection &key
 	auto ska_extract_key =
 	    SkaExtractKey<SORT_KEY>(requires_next_sort, ska_sort_width, sort_skippable_bytes, context.interrupted);
 
-	const auto print_vec = [](const auto& vec) {
-		auto stream = std::stringstream{};
-		stream << "{ ";
-		for (auto it = vec.cbegin(); it != vec.cend(); ++it) {
-			if (it != vec.begin()) {
-				stream << ", ";
-			}
-			stream << *it;
-		}
-		stream << " }";
+	// const auto print_vec = [](const auto& vec) {
+	// 	auto stream = std::stringstream{};
+	// 	stream << "{ ";
+	// 	for (auto it = vec.cbegin(); it != vec.cend(); ++it) {
+	// 		if (it != vec.begin()) {
+	// 			stream << ", ";
+	// 		}
+	// 		stream << *it;
+	// 	}
+	// 	stream << " }";
 
-		return stream.str();
-	};
+	// 	return stream.str();
+	// };
 
 	const auto fallback = [ska_extract_key](const BLOCK_ITERATOR &fb_begin, const BLOCK_ITERATOR &fb_end) {
 		duckdb_ska_sort::ska_sort(fb_begin, fb_end, ska_extract_key);
@@ -370,31 +370,41 @@ static void TemplatedSort(ClientContext &context, const TupleDataCollection &key
 		pos_list->reserve(key_data.Count());
 		const auto predicate = static_cast<uint64_t>(WindowOperatorConfig::get().predicate_value);
 
-		auto partition = begin->part0;
-		auto order_by = begin->part1;
-		auto order_by_count = idx_t{1};
+		const auto my_begin = BLOCK_ITERATOR(state, 0);
+		const auto my_end = BLOCK_ITERATOR(state, key_data.Count());
+
+		auto partition = uint64_t{0};
+		auto order_by = uint64_t{0};
+		auto order_by_count = idx_t{0};
 		auto i = idx_t{0};
-		auto last_match = idx_t{0};
-		for (auto it = begin + 1; it != end; ++it, ++i) {
-			if (it->part0 != partition) {
+		// auto last_match = idx_t{0};
+		for (auto it = my_begin; it != my_end; ++it, ++i) {
+			if (i == 0 || it->part0 != partition) {
 				partition = it->part0;
 				order_by = it->part1;
 				order_by_count = 1;
-				pos_list->push_back(i - last_match);
+				// pos_list->push_back(i - last_match);
+				pos_list->push_back(i);
 				// offsets.push_back(i);
-				last_match = i;
+				//last_match = i;
 				continue;
 			}
 
-			if (it->part0 != order_by && order_by_count <= predicate) {
-				++order_by_count;
-				pos_list->push_back(i - last_match);
+			const auto same_order = it->part1 == order_by;
+			if (same_order || (!same_order && order_by_count < predicate)) {
+				order_by_count += static_cast<idx_t>(!same_order);
+				order_by = it->part1;
+				// pos_list->push_back(i - last_match);
+				pos_list->push_back(i);
 				// offsets.push_back(i);
-				last_match = i;
+				// last_match = i;
 				continue;
 			}
 		}
+		// std::cout << std::to_string(pos_list->size()) + "\t" + std::to_string(my_end - my_begin) +  "\n";
+		// std::cout << print_vec(offsets) + "\n";
 	}
+
 
 	if (context.interrupted.load(std::memory_order_relaxed)) {
 		throw InterruptException();

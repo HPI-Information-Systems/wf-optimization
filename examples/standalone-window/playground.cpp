@@ -187,7 +187,7 @@ int main(int argc, char* argv[]) {
         }
 
         const auto duration = std::chrono::steady_clock::now() - start;
-        std::cout << "\t" << level_str << "\t" << result_count << "\t" <<  std::chrono::duration<double, std::milli>{duration}.count() << " ms\n";
+        std::cout << "\t" << level_str << "\t" << result_count  << "\t" << num_runs * partition_count * predicate_value - result_count << "\t" <<  std::chrono::duration<double, std::milli>{duration}.count() << " ms\n";
 
 
         // std::cout << "== Print ==\n";
