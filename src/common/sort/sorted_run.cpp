@@ -11,6 +11,7 @@
 
 #include <iostream>
 #include <type_traits>
+#include <deque>
 
 namespace duckdb {
 
@@ -264,7 +265,8 @@ struct SkaExtractKey {
 template <idx_t REMAINING>
 void PrintSortKey(const uint64_t *const &lhs, std::ostream& stream) {
 	constexpr auto remainder = REMAINING - 1;
-	stream << Radix::DecodeData<int64_t>(const_data_ptr_cast(lhs));
+	// stream << Radix::DecodeData<int64_t>(const_data_ptr_cast(lhs));
+	stream << *lhs;
 	if constexpr (remainder >= 1) {
 		stream << ".";
 		PrintSortKey<remainder>(lhs + 1, stream);
@@ -365,45 +367,60 @@ static void TemplatedSort(ClientContext &context, const TupleDataCollection &key
 	duckdb_vergesort::vergesort(begin, end, std::less<SORT_KEY>(), fallback);
 
 	// auto offsets = unsafe_vector<idx_t>{};
-	if constexpr (SORT_KEY_TYPE == SortKeyType::NO_PAYLOAD_FIXED_16) {
-		pos_list.emplace();
-		pos_list->reserve(key_data.Count());
-		const auto predicate = static_cast<uint64_t>(WindowOperatorConfig::get().predicate_value);
+	// if constexpr (SORT_KEY_TYPE == SortKeyType::NO_PAYLOAD_FIXED_16) {
+	// 	pos_list.emplace();
+	// 	pos_list->reserve(key_data.Count());
+	// 	const auto predicate = static_cast<uint64_t>(WindowOperatorConfig::get().predicate_value);
 
-		const auto my_begin = BLOCK_ITERATOR(state, 0);
-		const auto my_end = BLOCK_ITERATOR(state, key_data.Count());
+	// 	const auto my_begin = BLOCK_ITERATOR(state, 0);
+	// 	const auto my_end = BLOCK_ITERATOR(state, key_data.Count());
 
-		auto partition = uint64_t{0};
-		auto order_by = uint64_t{0};
-		auto order_by_count = idx_t{0};
-		auto i = idx_t{0};
-		// auto last_match = idx_t{0};
-		for (auto it = my_begin; it != my_end; ++it, ++i) {
-			if (i == 0 || it->part0 != partition) {
-				partition = it->part0;
-				order_by = it->part1;
-				order_by_count = 1;
-				// pos_list->push_back(i - last_match);
-				pos_list->push_back(i);
-				// offsets.push_back(i);
-				//last_match = i;
-				continue;
-			}
+	// 	auto partition = uint64_t{0};
+	// 	auto order_by = uint64_t{0};
+	// 	auto order_by_count = idx_t{0};
+	// 	auto i = idx_t{0};
+	// 	// auto last_keys = std::deque<SORT_KEY>{};
+	// 	// auto last_match = idx_t{0};
+	// 	for (auto it = my_begin; it != my_end; ++it, ++i) {
+	// 		// last_keys.push_back(*it);
+	// 		// if (last_keys.size() > 4) {
+	// 		// 	last_keys.pop_front();
+	// 		// }
+	// 		if (i == 0 || it->part0 != partition) {
+	// 			partition = it->part0;
+	// 			order_by = it->part1;
+	// 			order_by_count = 1;
+	// 			// pos_list->push_back(i - last_match);
+	// 			pos_list->push_back(i);
+	// 			// offsets.push_back(i);
+	// 			//last_match = i;
+	// 			continue;
+	// 		}
 
-			const auto same_order = it->part1 == order_by;
-			if (same_order || (!same_order && order_by_count < predicate)) {
-				order_by_count += static_cast<idx_t>(!same_order);
-				order_by = it->part1;
-				// pos_list->push_back(i - last_match);
-				pos_list->push_back(i);
-				// offsets.push_back(i);
-				// last_match = i;
-				continue;
-			}
-		}
-		// std::cout << std::to_string(pos_list->size()) + "\t" + std::to_string(my_end - my_begin) +  "\n";
-		// std::cout << print_vec(offsets) + "\n";
-	}
+	// 		const auto same_order = it->part1 == order_by;
+	// 		if (same_order || (!same_order && order_by_count < predicate)) {
+	// 			order_by_count += static_cast<idx_t>(!same_order);
+	// 			order_by = it->part1;
+	// 			// pos_list->push_back(i - last_match);
+	// 			pos_list->push_back(i);
+	// 			// offsets.push_back(i);
+	// 			// last_match = i;
+	// 			continue;
+	// 		}
+	// 		// auto msg = std::stringstream{};
+	// 		// msg << std::boolalpha << (i == 0) << "\t" << (it->part0 != partition) << "\t" << same_order << "\t" << (order_by_count < predicate) << "\t" << partition << "\t";
+	// 		// for (auto d_it = last_keys.rbegin(); d_it != last_keys.rend(); ++d_it) {
+	// 		// 	PrintSortKey<SORT_KEY::PARTS>(&(d_it->part0), msg);
+	// 		// 	msg << "\t";
+	// 		// }
+	// 		// msg << "\n";
+	// 		// std::cout << msg.str();
+
+
+	// 	}
+	// 	// std::cout << std::to_string(pos_list->size()) + "\t" + std::to_string(my_end - my_begin) +  "\n";
+	// 	// std::cout << print_vec(*pos_list) + "\n";
+	// }
 
 
 	if (context.interrupted.load(std::memory_order_relaxed)) {

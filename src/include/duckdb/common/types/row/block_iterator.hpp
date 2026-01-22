@@ -394,30 +394,29 @@ public:
 	using reference = value_type &;
 	using difference_type = idx_t;
 	using traits = std::iterator_traits<filtered_block_iterator_t>;
-	using offsets_it_t = unsafe_vector<idx_t>::const_iterator;
 	using STATE = FilteredBlockIteratorState;
 
 public:
-	explicit filtered_block_iterator_t(STATE &state_p) : state(&state_p), block_or_chunk_idx(0), tuple_idx(0), offsets_it(state_p.offsets.cbegin()) {
+	explicit filtered_block_iterator_t(STATE &state_p) : state(&state_p), block_or_chunk_idx(0), tuple_idx(0), current_pos(0) {
 	}
 
 	explicit filtered_block_iterator_t()
-	    : state(nullptr), block_or_chunk_idx(DConstants::INVALID_INDEX), tuple_idx(DConstants::INVALID_INDEX), offsets_it() {
+	    : state(nullptr), block_or_chunk_idx(DConstants::INVALID_INDEX), tuple_idx(DConstants::INVALID_INDEX), current_pos(DConstants::INVALID_INDEX) {
 		// Ideally, we wouldn't have a default constructor, because we always need a state.
 		// However, some sorting algorithms use the default constructor before initializing, so we need this
 	}
 
 	filtered_block_iterator_t(STATE &state_p, const idx_t &index) : state(&state_p) { // NOLINT: uninitialized on purpose
-		offsets_it = state_p.offsets.cbegin() + static_cast<offsets_it_t::difference_type>(index);
-		state->RandomAccess(block_or_chunk_idx, tuple_idx, *offsets_it);
+		current_pos = index;
+		state->RandomAccess(block_or_chunk_idx, tuple_idx, state->offsets[current_pos]);
 	}
 
-	filtered_block_iterator_t(STATE &state_p, const idx_t &block_idx_p, const idx_t &tuple_idx_p, const offsets_it_t& offsets_it_p)
-	    : state(&state_p), block_or_chunk_idx(block_idx_p), tuple_idx(tuple_idx_p), offsets_it(offsets_it_p) {
+	filtered_block_iterator_t(STATE &state_p, const idx_t &block_idx_p, const idx_t &tuple_idx_p, const idx_t current_pos_p)
+	    : state(&state_p), block_or_chunk_idx(block_idx_p), tuple_idx(tuple_idx_p), current_pos(current_pos_p) {
 	}
 
 	filtered_block_iterator_t(const filtered_block_iterator_t &other)
-	    : state(other.state), block_or_chunk_idx(other.block_or_chunk_idx), tuple_idx(other.tuple_idx), offsets_it(other.offsets_it) {
+	    : state(other.state), block_or_chunk_idx(other.block_or_chunk_idx), tuple_idx(other.tuple_idx), current_pos(other.current_pos) {
 	}
 
 	filtered_block_iterator_t &operator=(const filtered_block_iterator_t &other) {
@@ -425,7 +424,7 @@ public:
 		if (this != &other) { // This check is needed to shut clang-tidy up
 			block_or_chunk_idx = other.block_or_chunk_idx;
 			tuple_idx = other.tuple_idx;
-			offsets_it = other.offsets_it;
+			current_pos = other.current_pos;
 		}
 		return *this;
 	}
@@ -441,10 +440,11 @@ public:
 
 	//! Prefix and postfix increment and decrement
 	filtered_block_iterator_t &operator++() {
-		const auto current = *offsets_it;
-		++offsets_it;
-		const auto diff = *offsets_it - current;
-		state->Add(block_or_chunk_idx, tuple_idx, diff);
+		const auto old = current_pos;
+		if (current_pos < state->offsets.size()) {
+			++current_pos;
+		}
+		state->Add(block_or_chunk_idx, tuple_idx, state->offsets[current_pos] - state->offsets[old]);
 		return *this;
 	}
 	filtered_block_iterator_t operator++(int) {
@@ -453,10 +453,11 @@ public:
 		return tmp;
 	}
 	filtered_block_iterator_t &operator--() {
-		const auto current = *offsets_it;
-		--offsets_it;
-		const auto diff = current - *offsets_it;
-		state->Subtract(block_or_chunk_idx, tuple_idx, diff);
+		const auto old = current_pos;
+		if (current_pos > 0) {
+			--current_pos;
+		}
+		state->Subtract(block_or_chunk_idx, tuple_idx, state->offsets[old] - state->offsets[current_pos]);
 		return *this;
 	}
 	filtered_block_iterator_t operator--(int) {
@@ -467,38 +468,28 @@ public:
 
 	//! Random access
 	filtered_block_iterator_t &operator+=(const difference_type &n) {
-		const auto current = *offsets_it;
-		offsets_it += n;
-		const auto diff = *offsets_it - current;
-		state->Add(block_or_chunk_idx, tuple_idx, diff);
+		current_pos = MinValue<idx_t>(current_pos + n, state->offsets.size());
+		state->RandomAccess(block_or_chunk_idx, tuple_idx, state->offsets[current_pos]);
 		return *this;
 	}
 	filtered_block_iterator_t &operator-=(const difference_type &n) {
-		const auto current = *offsets_it;
-		offsets_it -= n;
-		const auto diff = current - *offsets_it;
-		state->Subtract(block_or_chunk_idx, tuple_idx, diff);
+		current_pos = n > current_pos ? 0 : current_pos - n;
+		state->RandomAccess(block_or_chunk_idx, tuple_idx, state->offsets[current_pos]);
 		return *this;
 	}
 	filtered_block_iterator_t operator+(const difference_type &n) const {
-		const auto current = *offsets_it;
-		const auto new_it = offsets_it + n;
-		const auto diff = *new_it - current;
-
 		idx_t new_block_or_chunk_idx = block_or_chunk_idx;
 		idx_t new_tuple_idx = tuple_idx;
-		state->Add(new_block_or_chunk_idx, new_tuple_idx, diff);
-		return filtered_block_iterator_t(*state, new_block_or_chunk_idx, new_tuple_idx, new_it);
+		auto new_pos = MinValue<idx_t>(current_pos + n, state->offsets.size());
+		state->RandomAccess(new_block_or_chunk_idx, new_tuple_idx, state->offsets[new_pos]);
+		return filtered_block_iterator_t(*state, new_block_or_chunk_idx, new_tuple_idx, new_pos);
 	}
 	filtered_block_iterator_t operator-(const difference_type &n) const {
-		const auto current = *offsets_it;
-		const auto new_it = offsets_it - n;
-		const auto diff = current - *new_it;
-
 		idx_t new_block_or_chunk_idx = block_or_chunk_idx;
 		idx_t new_tuple_idx = tuple_idx;
-		state->Subtract(new_block_or_chunk_idx, new_tuple_idx, diff);
-		return filtered_block_iterator_t(*state, new_block_or_chunk_idx, new_tuple_idx, new_it);
+		auto new_pos = n > current_pos ? 0 : current_pos - n;
+		state->RandomAccess(new_block_or_chunk_idx, new_tuple_idx, state->offsets[new_pos]);
+		return filtered_block_iterator_t(*state, new_block_or_chunk_idx, new_tuple_idx, new_pos);
 	}
 
 	reference operator[](const difference_type &n) const {
@@ -507,46 +498,46 @@ public:
 
 	//! Difference between iterators
 	difference_type operator-(const filtered_block_iterator_t &other) const {
-		return static_cast<difference_type>(offsets_it - other.offsets_it);
+		return static_cast<difference_type>(current_pos - other.current_pos);
 		// return state->GetIndex(block_or_chunk_idx, tuple_idx) -
 		//        other.state->GetIndex(other.block_or_chunk_idx, other.tuple_idx);
 	}
 
 	//! Comparison operators
 	bool operator==(const filtered_block_iterator_t &other) const {
-		return offsets_it == other.offsets_it;
+		return current_pos == other.current_pos;
 		// return block_or_chunk_idx == other.block_or_chunk_idx && tuple_idx == other.tuple_idx;
 	}
 	bool operator!=(const filtered_block_iterator_t &other) const {
-		return offsets_it != other.offsets_it;
+		return current_pos != other.current_pos;
 		// return block_or_chunk_idx != other.block_or_chunk_idx || tuple_idx != other.tuple_idx;
 	}
 	bool operator<(const filtered_block_iterator_t &other) const {
-		return offsets_it < other.offsets_it;
+		return current_pos < other.current_pos;
 		// return block_or_chunk_idx == other.block_or_chunk_idx ? tuple_idx < other.tuple_idx
 		//                                                       : block_or_chunk_idx < other.block_or_chunk_idx;
 	}
 	bool operator>(const filtered_block_iterator_t &other) const {
-		return offsets_it > other.offsets_it;
+		return current_pos > other.current_pos;
 		// return block_or_chunk_idx == other.block_or_chunk_idx ? tuple_idx > other.tuple_idx
 		//                                                       : block_or_chunk_idx > other.block_or_chunk_idx;
 	}
 	bool operator<=(const filtered_block_iterator_t &other) const {
-		return offsets_it <= other.offsets_it;
+		return current_pos <= other.current_pos;
 		// return block_or_chunk_idx == other.block_or_chunk_idx ? tuple_idx <= other.tuple_idx
 		//                                                       : block_or_chunk_idx <= other.block_or_chunk_idx;
 	}
 	bool operator>=(const filtered_block_iterator_t &other) const {
-		return offsets_it >= other.offsets_it;
+		return current_pos >= other.current_pos;
 		// return block_or_chunk_idx == other.block_or_chunk_idx ? tuple_idx >= other.tuple_idx
 		//                                                       : block_or_chunk_idx >= other.block_or_chunk_idx;
 	}
 
 private:
 	STATE *state;
+	idx_t current_pos;
 	idx_t block_or_chunk_idx;
 	idx_t tuple_idx;
-	offsets_it_t offsets_it;
 };
 
 

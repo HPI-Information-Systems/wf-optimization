@@ -123,7 +123,7 @@ private:
 	void MergePartition(SortedRunMergerGlobalState &gstate);
 	template <class STATE>
 	void MergePartitionSwitch(SortedRunMergerGlobalState &gstate, unsafe_vector<STATE> &states);
-	template <class STATE, SortKeyType SORT_KEY_TYPE>
+	template <class STATE, SortKeyType SORT_KEY_TYPE, bool DO_SKIP>
 	void TemplatedMergePartition(SortedRunMergerGlobalState &gstate, unsafe_vector<STATE> &states);
 
 	//! Scan from the merged partition
@@ -151,7 +151,6 @@ private:
 	//! States for the iterator types
 	unsafe_vector<BlockIteratorState<BlockIteratorStateType::IN_MEMORY>> in_memory_states;
 	unsafe_vector<BlockIteratorState<BlockIteratorStateType::EXTERNAL>> external_states;
-	unsafe_vector<FilteredBlockIteratorState> filtered_states;
 
 	//! Allocation for merging/scanning the partition
 	AllocatedData merged_partition;
@@ -169,8 +168,7 @@ private:
 	uint64_t partition;
 	uint64_t order_by;
 	idx_t order_by_count;
-	idx_t current_pos;
-	idx_t last_match;
+	idx_t skipped_tuples{0};
 };
 
 //===--------------------------------------------------------------------===//
@@ -308,11 +306,11 @@ SortedRunMergerLocalState::SortedRunMergerLocalState(SortedRunMergerGlobalState 
 		auto &key_data = *run->key_data;
 		switch (iterator_state_type) {
 		case BlockIteratorStateType::IN_MEMORY:
-			if (gstate.merger.use_filter) {
-				filtered_states.push_back(FilteredBlockIteratorState(key_data, *run->pos_list));
-			} else {
+			// if (gstate.merger.use_filter) {
+			// 	filtered_states.push_back(FilteredBlockIteratorState(key_data, *run->pos_list));
+			// } else {
 				in_memory_states.push_back(BlockIteratorState<BlockIteratorStateType::IN_MEMORY>(key_data));
-			}
+			// }
 			break;
 		case BlockIteratorStateType::EXTERNAL:
 			external_states.push_back(
@@ -364,9 +362,12 @@ SourceResultType SortedRunMergerLocalState::ExecuteTask(SortedRunMergerGlobalSta
 			MaterializePartition(gstate);
 		}
 		if (!chunk || chunk->size() == 0) {
+			// auto msg = std::stringstream{};
+			// msg << merged_partition_count << "\t" << merged_partition_index << "\n";
+			// std::cout << msg.str();
 			gstate.DestroyScannedData();
 			gstate.partitions[partition_idx.GetIndex()]->scanned = true;
-			const auto scan_count_after_adding = gstate.total_scanned.fetch_add(merged_partition_count);
+			const auto scan_count_after_adding = gstate.total_scanned.fetch_add(merged_partition_count + skipped_tuples);
 			partition_idx = optional_idx::Invalid();
 			task = SortedRunMergerTask::FINISHED;
 			if (scan_count_after_adding == gstate.merger.total_count) {
@@ -411,12 +412,12 @@ void SortedRunMergerLocalState::ComputePartitionBoundaries(SortedRunMergerGlobal
 	// Compute the end partition boundaries (lock-free)
 	switch (iterator_state_type) {
 	case BlockIteratorStateType::IN_MEMORY:
-		if (gstate.merger.use_filter) {
-			ComputePartitionBoundariesSwitch<FilteredBlockIteratorState>(gstate, p_idx, filtered_states);
-		} else {
+		// if (gstate.merger.use_filter) {
+		// 	ComputePartitionBoundariesSwitch<FilteredBlockIteratorState>(gstate, p_idx, filtered_states);
+		// } else {
 			ComputePartitionBoundariesSwitch<BlockIteratorState<BlockIteratorStateType::IN_MEMORY>>(gstate, p_idx,
 		                                                                                        in_memory_states);
-		}
+		// }
 		break;
 	case BlockIteratorStateType::EXTERNAL:
 		ComputePartitionBoundariesSwitch<BlockIteratorState<BlockIteratorStateType::EXTERNAL>>(gstate, p_idx,
@@ -497,7 +498,7 @@ void SortedRunMergerLocalState::TemplatedComputePartitionBoundaries(SortedRunMer
                                                                     unsafe_vector<STATE> &states) {
 	using SORT_KEY = SortKey<SORT_KEY_TYPE>;
 	using BLOCK_ITERATOR = typename block_iterator_traits<SORT_KEY, STATE>::iterator_type;
-	// std::cout << "TemplatedComputePartitionBoundaries " << gstate.num_runs << " runs, \t" << "\n";
+	// std::cout << "TemplatedComputePartitionBoundaries " + std::to_string(gstate.num_runs) + " runs\n";
 
 	D_ASSERT(run_boundaries.size() == gstate.num_runs);
 
@@ -600,11 +601,11 @@ void SortedRunMergerLocalState::AcquirePartitionBoundaries(SortedRunMergerGlobal
 void SortedRunMergerLocalState::MergePartition(SortedRunMergerGlobalState &gstate) {
 	switch (iterator_state_type) {
 	case BlockIteratorStateType::IN_MEMORY:
-		if (gstate.merger.use_filter) {
-			MergePartitionSwitch<FilteredBlockIteratorState>(gstate, filtered_states);
-		} else {
+		// if (gstate.merger.use_filter) {
+		// 	MergePartitionSwitch<FilteredBlockIteratorState>(gstate, filtered_states);
+		// } else {
 			MergePartitionSwitch<BlockIteratorState<BlockIteratorStateType::IN_MEMORY>>(gstate, in_memory_states);
-		}
+		// }
 		break;
 	case BlockIteratorStateType::EXTERNAL:
 		MergePartitionSwitch<BlockIteratorState<BlockIteratorStateType::EXTERNAL>>(gstate, external_states);
@@ -617,32 +618,35 @@ void SortedRunMergerLocalState::MergePartition(SortedRunMergerGlobalState &gstat
 
 template <class STATE>
 void SortedRunMergerLocalState::MergePartitionSwitch(SortedRunMergerGlobalState &gstate, unsafe_vector<STATE> &states) {
-	switch (sort_key_type) {
-	case SortKeyType::NO_PAYLOAD_FIXED_8:
-		return TemplatedMergePartition<STATE, SortKeyType::NO_PAYLOAD_FIXED_8>(gstate, states);
-	case SortKeyType::NO_PAYLOAD_FIXED_16:
-		return TemplatedMergePartition<STATE, SortKeyType::NO_PAYLOAD_FIXED_16>(gstate, states);
-	case SortKeyType::NO_PAYLOAD_FIXED_24:
-		return TemplatedMergePartition<STATE, SortKeyType::NO_PAYLOAD_FIXED_24>(gstate, states);
-	case SortKeyType::NO_PAYLOAD_FIXED_32:
-		return TemplatedMergePartition<STATE, SortKeyType::NO_PAYLOAD_FIXED_32>(gstate, states);
-	case SortKeyType::NO_PAYLOAD_VARIABLE_32:
-		return TemplatedMergePartition<STATE, SortKeyType::NO_PAYLOAD_VARIABLE_32>(gstate, states);
-	case SortKeyType::PAYLOAD_FIXED_16:
-		return TemplatedMergePartition<STATE, SortKeyType::PAYLOAD_FIXED_16>(gstate, states);
-	case SortKeyType::PAYLOAD_FIXED_24:
-		return TemplatedMergePartition<STATE, SortKeyType::PAYLOAD_FIXED_24>(gstate, states);
-	case SortKeyType::PAYLOAD_FIXED_32:
-		return TemplatedMergePartition<STATE, SortKeyType::PAYLOAD_FIXED_32>(gstate, states);
-	case SortKeyType::PAYLOAD_VARIABLE_32:
-		return TemplatedMergePartition<STATE, SortKeyType::PAYLOAD_VARIABLE_32>(gstate, states);
-	default:
-		throw NotImplementedException("SortedRunMergerLocalState::MergePartitionSwitch for %s",
-		                              EnumUtil::ToString(sort_key_type));
-	}
+	resolve_pos_list(gstate.merger.use_filter, [&](const auto has_pos_list) {
+		constexpr bool DO_SKIP = decltype(has_pos_list)::value;
+		switch (sort_key_type) {
+		case SortKeyType::NO_PAYLOAD_FIXED_8:
+			return TemplatedMergePartition<STATE, SortKeyType::NO_PAYLOAD_FIXED_8, DO_SKIP>(gstate, states);
+		case SortKeyType::NO_PAYLOAD_FIXED_16:
+			return TemplatedMergePartition<STATE, SortKeyType::NO_PAYLOAD_FIXED_16, DO_SKIP>(gstate, states);
+		case SortKeyType::NO_PAYLOAD_FIXED_24:
+			return TemplatedMergePartition<STATE, SortKeyType::NO_PAYLOAD_FIXED_24, DO_SKIP>(gstate, states);
+		case SortKeyType::NO_PAYLOAD_FIXED_32:
+			return TemplatedMergePartition<STATE, SortKeyType::NO_PAYLOAD_FIXED_32, DO_SKIP>(gstate, states);
+		case SortKeyType::NO_PAYLOAD_VARIABLE_32:
+			return TemplatedMergePartition<STATE, SortKeyType::NO_PAYLOAD_VARIABLE_32, DO_SKIP>(gstate, states);
+		case SortKeyType::PAYLOAD_FIXED_16:
+			return TemplatedMergePartition<STATE, SortKeyType::PAYLOAD_FIXED_16, DO_SKIP>(gstate, states);
+		case SortKeyType::PAYLOAD_FIXED_24:
+			return TemplatedMergePartition<STATE, SortKeyType::PAYLOAD_FIXED_24, DO_SKIP>(gstate, states);
+		case SortKeyType::PAYLOAD_FIXED_32:
+			return TemplatedMergePartition<STATE, SortKeyType::PAYLOAD_FIXED_32, DO_SKIP>(gstate, states);
+		case SortKeyType::PAYLOAD_VARIABLE_32:
+			return TemplatedMergePartition<STATE, SortKeyType::PAYLOAD_VARIABLE_32, DO_SKIP>(gstate, states);
+		default:
+			throw NotImplementedException("SortedRunMergerLocalState::MergePartitionSwitch for %s",
+			                              EnumUtil::ToString(sort_key_type));
+		}
+	});
 }
 
-template <class STATE, SortKeyType SORT_KEY_TYPE>
+template <class STATE, SortKeyType SORT_KEY_TYPE, bool DO_SKIP>
 void SortedRunMergerLocalState::TemplatedMergePartition(SortedRunMergerGlobalState &gstate,
                                                         unsafe_vector<STATE> &states) {
 	using SORT_KEY = SortKey<SORT_KEY_TYPE>;
@@ -658,27 +662,75 @@ void SortedRunMergerLocalState::TemplatedMergePartition(SortedRunMergerGlobalSta
 
 	idx_t active_runs = 0;
 	use_skip = false;
+	skipped_tuples = 0;
 
-	// std::cout << "TemplatedMergePartition " << gstate.num_runs << " runs, " << run_boundaries.size() << " boundaries, " << states.size() << " states \n";
-	for (idx_t run_idx = 0; run_idx < gstate.num_runs; run_idx++) {
-		auto &state = states[run_idx];
-		state.SetKeepPinned(true);
-		state.SetPinPayload(true);
+	if constexpr (DO_SKIP && SORT_KEY_TYPE == SortKeyType::NO_PAYLOAD_FIXED_16) {
+		use_skip = true;
+		partition = 0;
+		order_by = 0;
+		order_by_count = 0;
 
-		// Keep track of how many runs are actively being merged
-		const auto &run_boundary = run_boundaries[run_idx];
-		if (run_boundary.begin == run_boundary.end) {
-			continue;
+		for (idx_t run_idx = 0; run_idx < gstate.num_runs; run_idx++) {
+			auto &state = states[run_idx];
+			state.SetKeepPinned(true);
+			state.SetPinPayload(true);
+
+			// Keep track of how many runs are actively being merged
+			const auto &run_boundary = run_boundaries[run_idx];
+			if (run_boundary.begin == run_boundary.end) {
+				continue;
+			}
+
+			active_runs++;
+
+			auto it = BLOCK_ITERATOR(state, run_boundary.begin);
+			auto end = BLOCK_ITERATOR(state, run_boundary.end);
+
+			auto begin = true;
+			partition = 0;
+			order_by = 0;
+			order_by_count = 0;
+			for (; it != end; ++it) {
+				if (it->part0 != partition || begin) {
+					begin = false;
+					partition = it->part0;
+					order_by = it->part1;
+					order_by_count = 1;
+					merged_partition_keys[merged_partition_count++] = *it;
+					continue;
+				}
+
+				const auto same_order = it->part1 == order_by;
+				if (same_order || (!same_order && order_by_count < predicate)) {
+					order_by_count += static_cast<idx_t>(!same_order);
+					order_by = it->part1;
+					merged_partition_keys[merged_partition_count++] = *it;
+					continue;
+				}
+
+				++skipped_tuples;
+			}
 		}
+	} else {
+		for (idx_t run_idx = 0; run_idx < gstate.num_runs; run_idx++) {
+			auto &state = states[run_idx];
+			state.SetKeepPinned(true);
+			state.SetPinPayload(true);
 
-		active_runs++;
+			// Keep track of how many runs are actively being merged
+			const auto &run_boundary = run_boundaries[run_idx];
+			if (run_boundary.begin == run_boundary.end) {
+				continue;
+			}
 
-		auto it = BLOCK_ITERATOR(state, run_boundary.begin);
-		auto end = BLOCK_ITERATOR(state, run_boundary.end);
+			active_runs++;
 
-		auto tuple_id = idx_t{0};
-		for (; it != end; ++it) {
-			merged_partition_keys[merged_partition_count++] = *it;
+			auto it = BLOCK_ITERATOR(state, run_boundary.begin);
+			auto end = BLOCK_ITERATOR(state, run_boundary.end);
+
+			for (; it != end; ++it) {
+				merged_partition_keys[merged_partition_count++] = *it;
+			}
 		}
 	}
 
@@ -692,13 +744,6 @@ void SortedRunMergerLocalState::TemplatedMergePartition(SortedRunMergerGlobalSta
 	};
 	duckdb_vergesort::vergesort(merged_partition_keys, merged_partition_keys + merged_partition_count,
 	                            std::less<SORT_KEY>(), fallback);
-
-	if constexpr (std::is_same_v<STATE, FilteredBlockIteratorState> && SORT_KEY_TYPE == SortKeyType::NO_PAYLOAD_FIXED_16) {
-		use_skip = true;
-		partition = 0;
-		order_by = 0;
-		order_by_count = 0;
-	}
 }
 
 void SortedRunMergerLocalState::ScanPartition(SortedRunMergerGlobalState &gstate, DataChunk &chunk) {
@@ -747,41 +792,21 @@ void SortedRunMergerLocalState::TemplatedScanPartition(SortedRunMergerGlobalStat
 
 		// Scan
 		sorted_run_scan_state.Scan(*gstate.merger.sorted_runs[0], sort_key_pointers, count, chunk);
-
 	} else {
-		// const auto count = MinValue<idx_t>(static_cast<idx_t>(pos_list->cend() - pos_list_it), STANDARD_VECTOR_SIZE);
-		// for (idx_t i = 0; i < count; i++) {
-		// 	sort_keys[i] = &merged_partition_keys[*pos_list_it];
-		// 	++pos_list_it;
-		// }
-
-		// auto msg = std::stringstream{};
-		// Grab pointers to sort keys
-		// const auto merged_partition_keys = reinterpret_cast<SORT_KEY *>(merged_partition.get() + current_pos);
-
-		// const auto range = MinValue<idx_t>(merged_partition_count - current_pos, STANDARD_VECTOR_SIZE);
 		const auto end = merged_partition_count - merged_partition_index;
 		auto count = idx_t{0};
 		const auto begin = merged_partition_index;
 
-		// auto keys = std::set<SORT_KEY>{};
-		// auto keys_vec = std::vector<SORT_KEY>{};
 		auto i = idx_t{0};
 		auto is_begin = merged_partition_index == 0;
 
 
 		for (; i < end && count < STANDARD_VECTOR_SIZE ; ++i) {
-			auto msg = std::stringstream{};
-			// msg << current_pos << "\t" << i << "\t" << merged_partition_count << "\t" << range << "\t" << end << "\n";
-			// std::cout << msg.str();
 			if ((is_begin && i == 0) || merged_partition_keys[i].part0 != partition) {
 				partition = merged_partition_keys[i].part0;
 				order_by = merged_partition_keys[i].part1;
 				order_by_count = 1;
 				sort_keys[count] = &merged_partition_keys[i];
-				// keys.insert(merged_partition_keys[i]);
-				// keys_vec.push_back(merged_partition_keys[i]);
-				// last_match = current_pos;
 				++count;
 				continue;
 			}
@@ -791,20 +816,11 @@ void SortedRunMergerLocalState::TemplatedScanPartition(SortedRunMergerGlobalStat
 				order_by_count += static_cast<idx_t>(!same_order);
 				order_by = merged_partition_keys[i].part1;
 				sort_keys[count] = &merged_partition_keys[i];
-				// keys.insert(merged_partition_keys[i]);
-				// keys_vec.push_back(merged_partition_keys[i]);
-				// last_match = current_pos;
 				++count;
 				continue;
 			}
 		}
-		// if (i > 1) {
-		// 	current_pos += i-1;
-		// }
 		merged_partition_index += i;
-
-		// msg << merged_partition_count << "\t" << begin << "\t" << end << "\t" << merged_partition_index << "\t" << count  << "\t" << keys.size() << "\t" << keys_vec.size() <<  "\n";
-		// std::cout << msg.str();
 
 		// Scan
 		sorted_run_scan_state.Scan(*gstate.merger.sorted_runs[0], sort_key_pointers, count, chunk);
@@ -918,17 +934,7 @@ SortedRunMerger::SortedRunMerger(const Sort &sort_p, vector<unique_ptr<SortedRun
                                  idx_t partition_size_p, bool external_p, bool is_index_sort_p)
     : sort(sort_p), sorted_runs(std::move(sorted_runs_p)), total_count(SortedRunsTotalCount(sorted_runs)),
       partition_size(partition_size_p), external(external_p), is_index_sort(is_index_sort_p) {
-
-  use_filter = std::all_of(sorted_runs.cbegin(), sorted_runs.cend(), [](const auto& sorted_run){
-  	return sorted_run->pos_list.has_value();
-  });
-
-  auto cnt = idx_t{0};
-  for (const auto& sorted_run : sorted_runs) {
-  	cnt += sorted_run->Count();
-  }
-  // std::cout << "SortedRunMerger: " << sorted_runs.size() << " runs, " << cnt << " tuples\n";
-
+  use_filter = WindowOperatorConfig::get().shrink_runs;
 }
 
 unique_ptr<LocalSourceState> SortedRunMerger::GetLocalSourceState(ExecutionContext &,
