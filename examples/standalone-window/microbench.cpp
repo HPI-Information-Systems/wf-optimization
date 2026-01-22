@@ -56,6 +56,7 @@ int main(int argc, char* argv[]) {
 	auto core_count = std::stoul(execute_command("nproc"));
 	auto skewed = false;
 	auto test = false;
+	auto requested_level = std::optional<WindowOperatorConfig::OptimizationLevel>{};
 
 	for (auto arg_id = 1; arg_id < argc; ++arg_id) {
 		const auto argument = std::string{argv[arg_id]};
@@ -65,7 +66,9 @@ int main(int argc, char* argv[]) {
 			skewed = true;
 		} else if (argument == "--test") {
 			test = true;
-		} else if (arg_id == 1) {
+		} else if (argument == "--level" or argument == "-l") {
+            requested_level = str_to_optimization_level(std::string{argv[++arg_id]});
+        } else if (arg_id == 1) {
 			row_count = std::stoi(argument);
 		} else {
 			throw std::runtime_error("Unrecognized option: '" + argument + "'.");
@@ -133,8 +136,13 @@ int main(int argc, char* argv[]) {
 
 	auto ofstream = std::ofstream{};
 	if (!test) {
-		const auto result_filename = "microbenchmark_" + (skewed ? "skewed_" : std::to_string(row_count) + "-rows_") + (core_count == 1 ? "st" : "mt") + ".csv";
-		ofstream.open(result_filename);
+		auto result_filename = std::stringstream{};
+		result_filename << "microbenchmark_";
+		if (requested_level) {
+			result_filename << "level_" << optimization_level_to_str(*requested_level) << "_";
+		}
+		result_filename << (skewed ? "skewed_" : std::to_string(row_count) + "-rows_") << (core_count == 1 ? "st" : "mt") << ".csv";
+		ofstream.open(result_filename.str());
 		ofstream << "CONFIGURATION,ROW_COUNT,PARTITION_COUNT,RESULTS_PER_PARTITION,RESULT_COUNT,RUNTIME_NS\n";
 		ofstream << std::fixed;
 	}
@@ -149,12 +157,16 @@ int main(int argc, char* argv[]) {
 			num_runs = 10;
 		}
 		if (test) {
-			num_runs = num_runs / 10;
+			num_runs = 1;
 		}
 
 		std::cout << run_row_count << " rows, " << partition_count << " partitions, " << num_runs << " executions\n";
-		const auto level_lower = uint8_t{0};
-		const auto level_upper = static_cast<uint8_t>(WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptiveContext);
+		auto level_lower = uint8_t{0};
+		auto level_upper = static_cast<uint8_t>(WindowOperatorConfig::OptimizationLevel::Combined);
+		if (requested_level) {
+        	level_lower = static_cast<uint8_t>(*requested_level);
+        	level_upper = static_cast<uint8_t>(*requested_level);
+    	}
 
 		con.BeginTransaction();
 		con.Query("create table eval (a int, b int, c int);");
@@ -168,7 +180,7 @@ int main(int argc, char* argv[]) {
 				continue;
 			}
 
-			const auto level_str = WindowOperatorConfig::optimization_level_to_str(level);
+			const auto level_str = optimization_level_to_str(level);
 
 			const auto predicate_value = uint64_t{3};
 			const auto is_combined = level == WindowOperatorConfig::OptimizationLevel::Combined;

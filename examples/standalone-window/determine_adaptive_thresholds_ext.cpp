@@ -163,7 +163,7 @@ int main(int argc, char* argv[]) {
 
 		for (const auto level : {WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptive, WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptiveContext}) {
 
-			const auto level_str = WindowOperatorConfig::optimization_level_to_str(level);
+			const auto level_str = optimization_level_to_str(level);
 			const auto test_thresholds = level >= WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptive;
 			auto thresholds = std::vector<double>{};
 			if (level == WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptive) {

@@ -64,7 +64,7 @@ int main(int argc, char* argv[]) {
         } else if (argument == "--runs" or argument == "-r") {
             num_runs = std::stoul(std::string{argv[++arg_id]});
         } else if (argument == "--level" or argument == "-l") {
-            requested_level = WindowOperatorConfig::str_to_optimization_level(std::string{argv[++arg_id]});
+            requested_level = str_to_optimization_level(std::string{argv[++arg_id]});
         } else if (argument == "--warmup" or argument == "-w") {
             warmup = true;
         } else if (arg_id == 1) {
@@ -113,7 +113,7 @@ int main(int argc, char* argv[]) {
 
     std::cout << row_count << " rows, " << partition_count << " partitions\n";
     auto level_lower = uint8_t{0};
-    auto level_upper = static_cast<uint8_t>(WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptiveContext);
+    auto level_upper = static_cast<uint8_t>(WindowOperatorConfig::OptimizationLevel::Combined);
     if (requested_level) {
         level_lower = static_cast<uint8_t>(*requested_level);
         level_upper = static_cast<uint8_t>(*requested_level);
@@ -126,7 +126,7 @@ int main(int argc, char* argv[]) {
                 continue;
         }
 
-        const auto level_str = WindowOperatorConfig::optimization_level_to_str(level);
+        const auto level_str = optimization_level_to_str(level);
 
         std::cout << "\n==============================\n" << level_str << "\n==============================\n";
 

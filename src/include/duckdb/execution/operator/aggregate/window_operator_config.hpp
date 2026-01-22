@@ -73,15 +73,22 @@ class WindowOperatorConfig {
   return stream;
 }
 
- static std::string optimization_level_to_str(OptimizationLevel level) {
+ protected:
+  WindowOperatorConfig() = default;
+  WindowOperatorConfig(WindowOperatorConfig&&) noexcept = default;
+  WindowOperatorConfig& operator=(WindowOperatorConfig&&) noexcept = default;
+  ~WindowOperatorConfig() = default;
+};
+
+inline std::string optimization_level_to_str(WindowOperatorConfig::OptimizationLevel level) {
   auto stream = std::stringstream{};
   stream << level;
   return stream.str();
 }
 
-static OptimizationLevel str_to_optimization_level(const std::string& level_str) {
-  for (auto i = uint8_t{0}; i < static_cast<uint8_t>(OptimizationLevel::Combined); ++i) {
-    const auto level = static_cast<OptimizationLevel>(i);
+inline WindowOperatorConfig::OptimizationLevel str_to_optimization_level(const std::string& level_str) {
+  for (auto i = uint8_t{0}; i <= static_cast<uint8_t>(WindowOperatorConfig::OptimizationLevel::Combined); ++i) {
+    const auto level = static_cast<WindowOperatorConfig::OptimizationLevel>(i);
     if (optimization_level_to_str(level) == level_str) {
       return level;
     }
@@ -89,12 +96,5 @@ static OptimizationLevel str_to_optimization_level(const std::string& level_str)
 
   throw std::runtime_error("Unknown optimization level: '" + level_str + "'.");
 }
-
- protected:
-  WindowOperatorConfig() = default;
-  WindowOperatorConfig(WindowOperatorConfig&&) noexcept = default;
-  WindowOperatorConfig& operator=(WindowOperatorConfig&&) noexcept = default;
-  ~WindowOperatorConfig() = default;
-};
 
 }  // namespace duckdb
