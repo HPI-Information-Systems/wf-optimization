@@ -26,7 +26,7 @@ SortedRunScanState::SortedRunScanState(ClientContext &context, const Sort &sort_
 
 void SortedRunScanState::Scan(const SortedRun &sorted_run, const Vector &sort_key_pointers, const idx_t &count,
                               DataChunk &chunk) {
-	resolve_pos_list(sorted_run.pos_list.has_value(), [&](const auto pos_list) {
+	resolve_bool(false, [&](const auto pos_list) {
 		constexpr bool HAS_POS_LIST = decltype(pos_list)::value;
 		const auto sort_key_type = sort.key_layout->GetSortKeyType();
 		switch (sort_key_type) {
@@ -372,54 +372,36 @@ static void TemplatedSort(ClientContext &context, const TupleDataCollection &key
 	// 	pos_list->reserve(key_data.Count());
 	// 	const auto predicate = static_cast<uint64_t>(WindowOperatorConfig::get().predicate_value);
 
-	// 	const auto my_begin = BLOCK_ITERATOR(state, 0);
+	// 	auto it = BLOCK_ITERATOR(state, 0);
 	// 	const auto my_end = BLOCK_ITERATOR(state, key_data.Count());
 
-	// 	auto partition = uint64_t{0};
-	// 	auto order_by = uint64_t{0};
-	// 	auto order_by_count = idx_t{0};
+	// 	auto begin = true;
+	// 	auto run_partition = idx_t{0};
+	// 	auto run_order_by = idx_t{0};
+	// 	auto run_order_by_count = idx_t{0};
 	// 	auto i = idx_t{0};
-	// 	// auto last_keys = std::deque<SORT_KEY>{};
-	// 	// auto last_match = idx_t{0};
-	// 	for (auto it = my_begin; it != my_end; ++it, ++i) {
-	// 		// last_keys.push_back(*it);
-	// 		// if (last_keys.size() > 4) {
-	// 		// 	last_keys.pop_front();
-	// 		// }
-	// 		if (i == 0 || it->part0 != partition) {
-	// 			partition = it->part0;
-	// 			order_by = it->part1;
-	// 			order_by_count = 1;
-	// 			// pos_list->push_back(i - last_match);
+	// 	for (; it != my_end; ++it, ++i) {
+	// 		// merged_partition_keys[merged_partition_count++] = *it;
+	// 		const auto partition_value = extract_partition(*it);
+	// 		const auto order_value = extract_order_by(*it);
+
+	// 		if (begin || partition_value != run_partition) {
+	// 			begin = false;
+	// 			run_partition = partition_value;
+	// 			run_order_by = order_value;
+	// 			run_order_by_count = 1;
 	// 			pos_list->push_back(i);
-	// 			// offsets.push_back(i);
-	// 			//last_match = i;
 	// 			continue;
 	// 		}
 
-	// 		const auto same_order = it->part1 == order_by;
-	// 		if (same_order || (!same_order && order_by_count < predicate)) {
-	// 			order_by_count += static_cast<idx_t>(!same_order);
-	// 			order_by = it->part1;
-	// 			// pos_list->push_back(i - last_match);
+	// 		const auto same_order = order_value == run_order_by;
+	// 		if (same_order || (!same_order && run_order_by_count < predicate)) {
+	// 			run_order_by_count += static_cast<idx_t>(!same_order);
+	// 			run_order_by = order_value;
 	// 			pos_list->push_back(i);
-	// 			// offsets.push_back(i);
-	// 			// last_match = i;
 	// 			continue;
 	// 		}
-	// 		// auto msg = std::stringstream{};
-	// 		// msg << std::boolalpha << (i == 0) << "\t" << (it->part0 != partition) << "\t" << same_order << "\t" << (order_by_count < predicate) << "\t" << partition << "\t";
-	// 		// for (auto d_it = last_keys.rbegin(); d_it != last_keys.rend(); ++d_it) {
-	// 		// 	PrintSortKey<SORT_KEY::PARTS>(&(d_it->part0), msg);
-	// 		// 	msg << "\t";
-	// 		// }
-	// 		// msg << "\n";
-	// 		// std::cout << msg.str();
-
-
 	// 	}
-	// 	// std::cout << std::to_string(pos_list->size()) + "\t" + std::to_string(my_end - my_begin) +  "\n";
-	// 	// std::cout << print_vec(*pos_list) + "\n";
 	// }
 
 

@@ -116,6 +116,7 @@ public:
 
 	//! Returns the number of data chunks present in the ColumnDataCollection
 	DUCKDB_API idx_t ChunkCount() const;
+	DUCKDB_API unsafe_vector<idx_t> ChunkCounts() const;
 	//! Fetch an individual chunk from the ColumnDataCollection
 	DUCKDB_API void FetchChunk(idx_t chunk_idx, DataChunk &result) const;
 

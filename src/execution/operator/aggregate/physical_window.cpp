@@ -16,6 +16,7 @@
 #include <numeric>
 #include <functional>
 #include <iostream>
+#include <mutex>
 
 namespace duckdb {
 
@@ -57,8 +58,10 @@ public:
 	WindowHashGroup(WindowGlobalSinkState &gsink, HashGroupPtr &sorted, const idx_t hash_bin_p);
 
 	void AllocateMasks();
+	template <bool SET_BEGINS>
 	void ComputeMasks(const idx_t begin_idx, const idx_t end_idx);
-	void ComputeMasksSetBegins(const idx_t block_begin, const idx_t block_end);
+	template <bool SET_BEGINS>
+	void ComputeMasksForSmallRuns(const idx_t begin_idx, const idx_t end_idx);
 
 	ExecutorGlobalStates &GetGlobalStates(ClientContext &client);
 
@@ -178,6 +181,9 @@ public:
 	idx_t batch_base;
 
 	unsafe_vector<unsafe_vector<idx_t>> partition_begins;
+	unsafe_vector<idx_t> block_counts;
+	// unsafe_vector<std::mutex> block_mutexes;
+	std::mutex block_mutex;
 };
 
 class WindowGlobalSinkState : public GlobalSinkState {
@@ -211,6 +217,7 @@ public:
 
 	bool use_filter{false};
 	bool early_out{false};
+	bool shrink_runs{false};
 };
 
 //	Per-thread sink state
@@ -292,6 +299,7 @@ WindowGlobalSinkState::WindowGlobalSinkState(const PhysicalWindow &op, ClientCon
 
 	use_filter = WindowOperatorConfig::get().do_filter;
 	early_out = WindowOperatorConfig::get().do_early_out;
+	shrink_runs = WindowOperatorConfig::get().shrink_runs;
 
 	const auto mode = DBConfig::GetSetting<DebugWindowModeSetting>(client);
 	for (idx_t expr_idx = 0; expr_idx < op.select_list.size(); ++expr_idx) {
@@ -410,6 +418,7 @@ public:
 
 	bool use_filter = false;
     bool early_out = false;
+    bool shrink_runs = false;
 
 public:
 	idx_t MaxThreads() override {
@@ -434,6 +443,7 @@ WindowGlobalSourceState::WindowGlobalSourceState(ClientContext &client, WindowGl
 
 	use_filter = WindowOperatorConfig::get().do_filter;
 	early_out = WindowOperatorConfig::get().do_early_out;
+	shrink_runs = WindowOperatorConfig::get().shrink_runs;
 	// auto group_count = 0;
 	for (idx_t group_idx = 0; group_idx < hash_groups.size(); ++group_idx) {
 		auto rows = std::move(hash_groups[group_idx]);
@@ -480,12 +490,14 @@ void WindowGlobalSourceState::CreateTaskList() {
 	// STANDARD_VECTOR_SIZE >> ValidityMask::BITS_PER_VALUE, but if STANDARD_VECTOR_SIZE is say 2,
 	// we need to align the chunk count to the mask width.
 	const auto aligned_scale = MaxValue<idx_t>(ValidityMask::BITS_PER_VALUE / STANDARD_VECTOR_SIZE, 1);
+	// std::cout << "aligned_scale " + std::to_string(aligned_scale) + "\n";
 	const auto aligned_count = (max_block.first + aligned_scale - 1) / aligned_scale;
 	const auto per_thread = aligned_scale * ((aligned_count + threads - 1) / threads);
 	if (!per_thread) {
 		throw InternalException("No blocks per thread! %ld threads, %ld groups, %ld blocks, %ld hash group", threads,
 		                        partition_blocks.size(), max_block.first, max_block.second);
 	}
+	// std::cout << "Per thread: " + std::to_string(per_thread) + "\n";
 
 	for (const auto &b : partition_blocks) {
 		total_tasks += window_hash_groups[b.second]->InitTasks(per_thread);
@@ -509,6 +521,14 @@ WindowHashGroup::WindowHashGroup(WindowGlobalSinkState &gsink, HashGroupPtr &sor
 		blocks = rows->ChunkCount();
 		if (gsink.early_out) {
 			partition_begins.resize(blocks);
+		}
+		if (gsink.shrink_runs) {
+			block_counts = rows->ChunkCounts();
+			// block_mutexes = std::vector<std::mutex>((count + ValidityMask::BITS_PER_VALUE - 1) / ValidityMask::BITS_PER_VALUE);
+			// auto msg = std::stringstream{};
+			// msg << "group " << hash_bin << " " << count << " tuples " << block_mutexes.size() << " mutexes\n";
+			// std::cout << msg.str();
+
 		}
 	}
 
@@ -561,6 +581,7 @@ void WindowHashGroup::AllocateMasks() {
 	}
 }
 
+template <bool SET_BEGINS>
 void WindowHashGroup::ComputeMasks(const idx_t block_begin, const idx_t block_end) {
 	D_ASSERT(count > 0);
 
@@ -617,6 +638,9 @@ void WindowHashGroup::ComputeMasks(const idx_t block_begin, const idx_t block_en
 		                   for (idx_t i = 0; i < ndistinct; ++i) {
 			                   const idx_t curr_index = row_idx + distinct.get_index(i);
 			                   partition_mask.SetValidUnsafe(curr_index);
+			                   if constexpr (SET_BEGINS) {
+			                   	 partition_begins[curr_block].push_back(curr_index);
+			                   }
 			                   for (auto &order_mask : order_masks) {
 				                   order_mask.second.SetValidUnsafe(curr_index);
 			                   }
@@ -656,29 +680,73 @@ void WindowHashGroup::ComputeMasks(const idx_t block_begin, const idx_t block_en
 	                   });
 }
 
-void WindowHashGroup::ComputeMasksSetBegins(const idx_t block_begin, const idx_t block_end) {
-	D_ASSERT(count > 0);
+namespace {
 
-	// std::cout << "\nComputeMasks " << block_begin << "  " << block_end << "\n";
-
-	//	Initialise our range
-	AllocateMasks();
-	const auto begin_entry = partition_mask.EntryCount(block_begin * STANDARD_VECTOR_SIZE);
-	const auto end_entry = partition_mask.EntryCount(MinValue<idx_t>(block_end * STANDARD_VECTOR_SIZE, count));
-
-	//	If the data is unsorted, then the chunk sizes may be < STANDARD_VECTOR_SIZE,
-	//	and the entry range may be empty.
-	if (begin_entry >= end_entry) {
-		D_ASSERT(gsink.global_partition->sort_col_count == 0);
+inline void SetEntryRangeInvalid(ValidityMask& mask, const idx_t count, const idx_t begin_entry, const idx_t begin_idx, const idx_t end_entry, const idx_t end_idx) {
+	mask.EnsureWritable();
+	if (count == 0) {
 		return;
 	}
 
-	partition_mask.SetRangeInvalid(count, begin_entry, end_entry);
+	// const auto last_entry_index = ValidityBuffer::EntryCount(count) - 1;
+	// if (end_entry >= last_entry_index) {
+	// 	end_entry = last_entry_index;
+	// 	end_idx_in_entry = ValidityBuffer::BITS_PER_VALUE - 1;
+	// }
+
+	const uint64_t begin_mask = (begin_idx == 0) ? 0 : ValidityMask::ValidityBuffer::MAX_ENTRY >> (ValidityMask::BITS_PER_VALUE - begin_idx);
+	const uint64_t end_mask = ValidityMask::ValidityBuffer::MAX_ENTRY << (end_idx);
+	if (begin_entry == end_entry) {
+		mask.GetData()[begin_entry] &= (begin_mask | end_mask);
+		return;
+	}
+	mask.GetData()[begin_entry] &= begin_mask;
+	mask.GetData()[end_entry] &= end_mask;
+	const auto end = end_entry - 1;
+	for (auto i = begin_entry + 1; i <= end; ++i) {
+		mask.GetData()[i] = 0;
+	}
+}
+
+}
+
+template <bool SET_BEGINS>
+void WindowHashGroup::ComputeMasksForSmallRuns(const idx_t block_begin, const idx_t block_end) {
+	D_ASSERT(count > 0);
+
+	//	Initialise our range
+	AllocateMasks();
+
+	auto begin_count = idx_t{0};
+	for (auto block_id = idx_t{0}; block_id < block_begin; ++block_id) {
+		begin_count += block_counts[block_id];
+	}
+
+	auto end_count = begin_count;
+	for (auto block_id = block_begin; block_id < block_end; ++block_id) {
+		end_count += block_counts[block_id];
+	}
+
+	idx_t begin_entry, begin_idx;
+	partition_mask.GetEntryIndex(begin_count, begin_entry, begin_idx);
+	idx_t end_entry, end_idx;
+	partition_mask.GetEntryIndex(end_count, end_entry, end_idx);
+
+	// auto begin_lock = std::unique_lock{block_mutexes[begin_entry], std::defer_lock};
+	// auto end_lock = std::unique_lock{block_mutexes[end_entry], std::defer_lock};
+	// if (begin_entry == end_entry) {
+	// 	begin_lock.lock();
+	// } else {
+	// 	std::lock(begin_lock, end_lock);
+	// }
+	const auto lock = std::lock_guard{block_mutex};
+
+	SetEntryRangeInvalid(partition_mask, count, begin_entry, begin_idx, end_entry, end_idx);
 	if (!block_begin) {
 		partition_mask.SetValidUnsafe(0);
 	}
 	for (auto &order_mask : order_masks) {
-		order_mask.second.SetRangeInvalid(count, begin_entry, end_entry);
+		SetEntryRangeInvalid(order_mask.second, count, begin_entry, begin_idx, end_entry, end_idx);
 		if (!block_begin) {
 			order_mask.second.SetValidUnsafe(0);
 		}
@@ -714,7 +782,9 @@ void WindowHashGroup::ComputeMasksSetBegins(const idx_t block_begin, const idx_t
 		                   for (idx_t i = 0; i < ndistinct; ++i) {
 			                   const idx_t curr_index = row_idx + distinct.get_index(i);
 			                   partition_mask.SetValidUnsafe(curr_index);
-			                   partition_begins[curr_block].push_back(curr_index);
+			                   if constexpr (SET_BEGINS) {
+			                   	 partition_begins[curr_block].push_back(curr_index);
+			                   }
 			                   for (auto &order_mask : order_masks) {
 				                   order_mask.second.SetValidUnsafe(curr_index);
 			                   }
@@ -752,6 +822,10 @@ void WindowHashGroup::ComputeMasksSetBegins(const idx_t block_begin, const idx_t
 			                   }
 		                   }
 	                   });
+	// begin_lock.unlock();
+	// if (begin_entry != end_entry) {
+	// 	end_lock.unlock();
+	// }
 }
 
 // Per-thread scan state
@@ -829,12 +903,14 @@ void WindowLocalSourceState::Mask(ExecutionContext &context, InterruptState &int
 	D_ASSERT(task);
 	D_ASSERT(task->stage == WindowGroupStage::MASK);
 
-
-	if (!gsource.early_out) {
-		window_hash_group->ComputeMasks(task->begin_idx, task->end_idx);
-	} else {
-		window_hash_group->ComputeMasksSetBegins(task->begin_idx, task->end_idx);
-	}
+	resolve_bool(gsource.early_out, [&](const auto set_begins){
+		constexpr auto SET_BEGINS = decltype(set_begins)::value;
+		if (gsource.shrink_runs) {
+			window_hash_group->ComputeMasksForSmallRuns<SET_BEGINS>(task->begin_idx, task->end_idx);
+		} else {
+			window_hash_group->ComputeMasks<SET_BEGINS>(task->begin_idx, task->end_idx);
+		}
+	});
 
 	//	Mark this range as done
 	window_hash_group->masked += (task->end_idx - task->begin_idx);

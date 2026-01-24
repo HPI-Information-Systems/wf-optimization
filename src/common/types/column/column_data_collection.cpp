@@ -1210,6 +1210,17 @@ idx_t ColumnDataCollection::ChunkCount() const {
 	return chunk_count;
 }
 
+unsafe_vector<idx_t> ColumnDataCollection::ChunkCounts() const {
+	auto chunk_counts = unsafe_vector<idx_t>{};
+	chunk_counts.reserve(segments.size());
+	for (const auto &segment : segments) {
+		for (const auto& chunk_data : segment->chunk_data) {
+			chunk_counts.push_back(chunk_data.count);
+		}
+	}
+	return chunk_counts;
+}
+
 void ColumnDataCollection::FetchChunk(idx_t chunk_idx, DataChunk &result) const {
 	D_ASSERT(chunk_idx < ChunkCount());
 	for (auto &segment : segments) {

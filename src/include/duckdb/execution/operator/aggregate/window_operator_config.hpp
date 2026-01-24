@@ -3,6 +3,7 @@
 #include <string>
 #include <sstream>
 #include <stdexcept>
+#include <atomic>
 
 namespace duckdb {
 
@@ -39,6 +40,7 @@ class WindowOperatorConfig {
   int64_t predicate_value{0};
   uint64_t expected_partitions{0};
   double shrink_partitions_threshold{0.2};
+  std::atomic_uint32_t idx{0};
 
   friend std::ostream& operator<<(std::ostream& stream, WindowOperatorConfig::OptimizationLevel level) {
   switch (level) {
@@ -75,8 +77,35 @@ class WindowOperatorConfig {
 
  protected:
   WindowOperatorConfig() = default;
-  WindowOperatorConfig(WindowOperatorConfig&&) noexcept = default;
-  WindowOperatorConfig& operator=(WindowOperatorConfig&&) noexcept = default;
+  WindowOperatorConfig(WindowOperatorConfig&& rhs) noexcept {
+    do_filter = rhs.do_filter;
+    do_early_out = rhs.do_early_out;
+    skip_sort = rhs.skip_sort;
+    shrink_runs = rhs.shrink_runs;
+    shrink_partitions = rhs.shrink_partitions;
+    simulate_shrink_partitions = rhs.simulate_shrink_partitions;
+    shrink_partitions_adaptive = rhs.shrink_partitions_adaptive;
+    use_adaptivity_context = rhs.use_adaptivity_context;
+    predicate_value = rhs.predicate_value;
+    expected_partitions = rhs.expected_partitions;
+    shrink_partitions_threshold = rhs.shrink_partitions_threshold;
+    idx = rhs.idx.load();
+  };
+  WindowOperatorConfig& operator=(WindowOperatorConfig&& rhs) noexcept {
+    do_filter = rhs.do_filter;
+    do_early_out = rhs.do_early_out;
+    skip_sort = rhs.skip_sort;
+    shrink_runs = rhs.shrink_runs;
+    shrink_partitions = rhs.shrink_partitions;
+    simulate_shrink_partitions = rhs.simulate_shrink_partitions;
+    shrink_partitions_adaptive = rhs.shrink_partitions_adaptive;
+    use_adaptivity_context = rhs.use_adaptivity_context;
+    predicate_value = rhs.predicate_value;
+    expected_partitions = rhs.expected_partitions;
+    shrink_partitions_threshold = rhs.shrink_partitions_threshold;
+    idx = rhs.idx.load();
+    return *this;
+  };
   ~WindowOperatorConfig() = default;
 };
 
@@ -95,6 +124,15 @@ inline WindowOperatorConfig::OptimizationLevel str_to_optimization_level(const s
   }
 
   throw std::runtime_error("Unknown optimization level: '" + level_str + "'.");
+}
+
+template <typename Functor>
+void resolve_bool(bool val, const Functor& fn) {
+  if (val) {
+    fn(std::true_type{});
+  } else {
+    fn(std::false_type{});
+  }
 }
 
 }  // namespace duckdb
