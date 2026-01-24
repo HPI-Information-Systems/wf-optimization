@@ -167,7 +167,7 @@ int main(int argc, char* argv[]) {
 
         WindowOperatorConfig::get().expected_partitions = partition_count;
 
-        string query = WindowOperatorConfig::get().do_filter ?
+        string query = WindowOperatorConfig::get().do_filter  ? // WindowOperatorConfig::get().shrink_runs ?
          "SELECT * from (select a, b, rank() OVER (PARTITION BY a ORDER BY b) rnk FROM eval) t" :
           "SELECT * from (select a, b, rank() OVER (PARTITION BY a ORDER BY b) rnk FROM eval) t WHERE rnk <= " + std::to_string(predicate_value);
 
@@ -178,9 +178,11 @@ int main(int argc, char* argv[]) {
         if (warmup) {
             con.Query(query);
         }
+
+        auto result = unique_ptr<MaterializedQueryResult>{};
         const auto start = std::chrono::steady_clock::now();
         for (auto run = 0; run < num_runs; ++run) {
-            const auto result = con.Query(query);
+            result = con.Query(query);
             result_count += result->RowCount();
             // result->Print();
         }
@@ -194,8 +196,8 @@ int main(int argc, char* argv[]) {
 
         // std::cout << "== Print ==\n";
         // con.Query(query + " ORDER BY a, rnk")->Print();
-        if (partition_count < 100 || verbose) {
-            con.Query(query)->Print();
+        if (verbose) {
+            result->Print();
         }
         // con.Query("select min(cnt), max(cnt), avg(cnt), min(o_cnt), max(o_cnt), avg(o_cnt) from (SELECT count(*) cnt, count(distinct ss_sold_date_sk) o_cnt from store_sales group BY ss_item_sk) t")->Print();
         //con.Query("SELECT * FROM (SELECT ss_item_sk, ss_sold_date_sk, rank() OVER (PARTITION BY ss_item_sk ORDER BY ss_sold_date_sk) rnk FROM store_sales) t WHERE rnk < 20")->Print();
