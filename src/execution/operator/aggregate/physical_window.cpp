@@ -182,7 +182,7 @@ public:
 
 	unsafe_vector<unsafe_vector<idx_t>> partition_begins;
 	unsafe_vector<idx_t> block_counts;
-	// unsafe_vector<std::mutex> block_mutexes;
+	unsafe_vector<std::mutex> block_mutexes;
 	std::mutex block_mutex;
 };
 
@@ -524,7 +524,7 @@ WindowHashGroup::WindowHashGroup(WindowGlobalSinkState &gsink, HashGroupPtr &sor
 		}
 		if (gsink.shrink_runs) {
 			block_counts = rows->ChunkCounts();
-			// block_mutexes = std::vector<std::mutex>((count + ValidityMask::BITS_PER_VALUE - 1) / ValidityMask::BITS_PER_VALUE);
+			block_mutexes = std::vector<std::mutex>((((count + ValidityMask::BITS_PER_VALUE - 1) / ValidityMask::BITS_PER_VALUE) + 1 ) / 2);
 			// auto msg = std::stringstream{};
 			// msg << "group " << hash_bin << " " << count << " tuples " << block_mutexes.size() << " mutexes\n";
 			// std::cout << msg.str();
@@ -732,14 +732,17 @@ void WindowHashGroup::ComputeMasksForSmallRuns(const idx_t block_begin, const id
 	idx_t end_entry, end_idx;
 	partition_mask.GetEntryIndex(end_count, end_entry, end_idx);
 
-	// auto begin_lock = std::unique_lock{block_mutexes[begin_entry], std::defer_lock};
-	// auto end_lock = std::unique_lock{block_mutexes[end_entry], std::defer_lock};
-	// if (begin_entry == end_entry) {
-	// 	begin_lock.lock();
-	// } else {
-	// 	std::lock(begin_lock, end_lock);
-	// }
-	const auto lock = std::lock_guard{block_mutex};
+	const auto begin_mutex = begin_entry % 2;
+	const auto end_mutex = end_entry % 2;
+
+	auto begin_lock = std::unique_lock{block_mutexes[begin_mutex], std::defer_lock};
+	auto end_lock = std::unique_lock{block_mutexes[end_mutex], std::defer_lock};
+	if (begin_mutex == end_mutex) {
+		begin_lock.lock();
+	} else {
+		std::lock(begin_lock, end_lock);
+	}
+	// const auto lock = std::lock_guard{block_mutex};
 
 	SetEntryRangeInvalid(partition_mask, count, begin_entry, begin_idx, end_entry, end_idx);
 	if (!block_begin) {
