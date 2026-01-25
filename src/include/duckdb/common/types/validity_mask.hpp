@@ -289,21 +289,11 @@ public:
 
 	//! Marks a range of entries in the validity mask as invalid (null)
 	//! This is useful for initialising large masks in parallel.
-	inline void SetEntryRangeInvalid(const idx_t count, const idx_t begin_row, const idx_t end_row) {
+	inline void SetEntryRangeInvalid(const idx_t count, const idx_t begin_entry, const idx_t begin_idx, const idx_t end_entry, const idx_t end_idx) {
 		EnsureWritable();
 		if (count == 0) {
 			return;
 		}
-
-		idx_t begin_entry, begin_idx;
-		GetEntryIndex(begin_row, begin_entry, begin_idx);
-		idx_t end_entry, end_idx;
-		GetEntryIndex(end_row, end_entry, end_idx);
-		// const auto last_entry_index = ValidityBuffer::EntryCount(count) - 1;
-		// if (end_entry >= last_entry_index) {
-		// 	end_entry = last_entry_index;
-		// 	end_idx_in_entry = ValidityBuffer::BITS_PER_VALUE - 1;
-		// }
 
 		const uint64_t begin_mask = (begin_idx == 0) ? 0 : ValidityBuffer::MAX_ENTRY >> (BITS_PER_VALUE - begin_idx);
 		const uint64_t end_mask = ValidityBuffer::MAX_ENTRY << (end_idx);

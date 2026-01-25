@@ -686,36 +686,6 @@ void WindowHashGroup::ComputeMasks(const idx_t block_begin, const idx_t block_en
 	                   });
 }
 
-namespace {
-
-inline void SetEntryRangeInvalid(ValidityMask& mask, const idx_t count, const idx_t begin_entry, const idx_t begin_idx, const idx_t end_entry, const idx_t end_idx) {
-	mask.EnsureWritable();
-	if (count == 0) {
-		return;
-	}
-
-	// const auto last_entry_index = ValidityBuffer::EntryCount(count) - 1;
-	// if (end_entry >= last_entry_index) {
-	// 	end_entry = last_entry_index;
-	// 	end_idx_in_entry = ValidityBuffer::BITS_PER_VALUE - 1;
-	// }
-
-	const uint64_t begin_mask = (begin_idx == 0) ? 0 : ValidityMask::ValidityBuffer::MAX_ENTRY >> (ValidityMask::BITS_PER_VALUE - begin_idx);
-	const uint64_t end_mask = ValidityMask::ValidityBuffer::MAX_ENTRY << (end_idx);
-	if (begin_entry == end_entry) {
-		mask.GetData()[begin_entry] &= (begin_mask | end_mask);
-		return;
-	}
-	mask.GetData()[begin_entry] &= begin_mask;
-	mask.GetData()[end_entry] &= end_mask;
-	const auto end = end_entry - 1;
-	for (auto i = begin_entry + 1; i <= end; ++i) {
-		mask.GetData()[i] = 0;
-	}
-}
-
-}
-
 template <bool SET_BEGINS>
 void WindowHashGroup::ComputeMasksForSmallRuns(const idx_t block_begin, const idx_t block_end) {
 	D_ASSERT(count > 0);
@@ -743,12 +713,12 @@ void WindowHashGroup::ComputeMasksForSmallRuns(const idx_t block_begin, const id
 	// }
 	const auto lock = std::lock_guard{block_mutex};
 
-	SetEntryRangeInvalid(partition_mask, count, begin_entry, begin_idx, end_entry, end_idx);
+	partition_mask.SetEntryRangeInvalid(count, begin_entry, begin_idx, end_entry, end_idx);
 	if (!block_begin) {
 		partition_mask.SetValidUnsafe(0);
 	}
 	for (auto &order_mask : order_masks) {
-		SetEntryRangeInvalid(order_mask.second, count, begin_entry, begin_idx, end_entry, end_idx);
+		order_mask.second.SetEntryRangeInvalid(count, begin_entry, begin_idx, end_entry, end_idx);
 		if (!block_begin) {
 			order_mask.second.SetValidUnsafe(0);
 		}
