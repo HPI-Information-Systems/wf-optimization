@@ -181,8 +181,8 @@ public:
 	idx_t batch_base;
 
 	unsafe_vector<unsafe_vector<idx_t>> partition_begins;
-	unsafe_vector<idx_t> block_counts;
-	unsafe_vector<std::mutex> block_mutexes;
+	unsafe_vector<idx_t> block_sums;
+	// unsafe_vector<std::mutex> block_mutexes;
 	std::mutex block_mutex;
 };
 
@@ -523,8 +523,14 @@ WindowHashGroup::WindowHashGroup(WindowGlobalSinkState &gsink, HashGroupPtr &sor
 			partition_begins.resize(blocks);
 		}
 		if (gsink.shrink_runs) {
-			block_counts = rows->ChunkCounts();
-			block_mutexes = std::vector<std::mutex>((((count + ValidityMask::BITS_PER_VALUE - 1) / ValidityMask::BITS_PER_VALUE) + 1 ) / 2);
+			const auto block_counts = rows->ChunkCounts();
+			auto block_sum = idx_t{0};
+			block_sums.resize(blocks);
+			for (auto block_id = idx_t{0}; block_id < blocks; ++block_id) {
+				block_sum += block_counts[block_id];
+				block_sums[block_id] = block_sum;
+			}
+			// block_mutexes = std::vector<std::mutex>((((count + ValidityMask::BITS_PER_VALUE - 1) / ValidityMask::BITS_PER_VALUE) + 1 ) / 2);
 			// auto msg = std::stringstream{};
 			// msg << "group " << hash_bin << " " << count << " tuples " << block_mutexes.size() << " mutexes\n";
 			// std::cout << msg.str();
@@ -717,32 +723,25 @@ void WindowHashGroup::ComputeMasksForSmallRuns(const idx_t block_begin, const id
 	//	Initialise our range
 	AllocateMasks();
 
-	auto begin_count = idx_t{0};
-	for (auto block_id = idx_t{0}; block_id < block_begin; ++block_id) {
-		begin_count += block_counts[block_id];
-	}
-
-	auto end_count = begin_count;
-	for (auto block_id = block_begin; block_id < block_end; ++block_id) {
-		end_count += block_counts[block_id];
-	}
+	const idx_t begin_count = block_begin == 0 ? 0 : block_sums[block_begin - 1];
+	const idx_t end_count = block_sums[block_end - 1];
 
 	idx_t begin_entry, begin_idx;
 	partition_mask.GetEntryIndex(begin_count, begin_entry, begin_idx);
 	idx_t end_entry, end_idx;
 	partition_mask.GetEntryIndex(end_count, end_entry, end_idx);
 
-	const auto begin_mutex = begin_entry % 2;
-	const auto end_mutex = end_entry % 2;
+	// const auto begin_mutex = begin_entry % 2;
+	// const auto end_mutex = end_entry % 2;
 
-	auto begin_lock = std::unique_lock{block_mutexes[begin_mutex], std::defer_lock};
-	auto end_lock = std::unique_lock{block_mutexes[end_mutex], std::defer_lock};
-	if (begin_mutex == end_mutex) {
-		begin_lock.lock();
-	} else {
-		std::lock(begin_lock, end_lock);
-	}
-	// const auto lock = std::lock_guard{block_mutex};
+	// auto begin_lock = std::unique_lock{block_mutexes[begin_mutex], std::defer_lock};
+	// auto end_lock = std::unique_lock{block_mutexes[end_mutex], std::defer_lock};
+	// if (begin_mutex == end_mutex) {
+	// 	begin_lock.lock();
+	// } else {
+	// 	std::lock(begin_lock, end_lock);
+	// }
+	const auto lock = std::lock_guard{block_mutex};
 
 	SetEntryRangeInvalid(partition_mask, count, begin_entry, begin_idx, end_entry, end_idx);
 	if (!block_begin) {
