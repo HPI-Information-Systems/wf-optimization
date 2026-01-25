@@ -100,6 +100,7 @@ class SortedRunMergerGlobalState;
 class SortedRunMergerLocalState : public LocalSourceState {
 public:
 	explicit SortedRunMergerLocalState(SortedRunMergerGlobalState &gstate_p);
+	~SortedRunMergerLocalState();
 
 public:
 	//! Whether this thread has finished the work it has been assigned
@@ -174,6 +175,11 @@ private:
 	idx_t extra_skipped_tuples{0};
 	idx_t written_tuples{0};
 	uint32_t my_id = ++WindowOperatorConfig::get().idx;
+
+	std::optional<TimePoint> merge_begin;
+	TimePoint merge_end;
+	std::optional<TimePoint> scan_begin;
+	TimePoint scan_end;
 };
 
 //===--------------------------------------------------------------------===//
@@ -326,6 +332,15 @@ SortedRunMergerLocalState::SortedRunMergerLocalState(SortedRunMergerGlobalState 
 			                              EnumUtil::ToString(iterator_state_type));
 		}
 	}
+}
+
+SortedRunMergerLocalState::~SortedRunMergerLocalState() {
+	auto msg = std::stringstream{};
+	msg << "SortedRunMergerLocalState " << my_id << " merge "
+		<< merge_begin->time_since_epoch().count() << " " << merge_end.time_since_epoch().count() << "\n"
+		<< "SortedRunMergerLocalState " << my_id << " construct chunks "
+		<< scan_begin->time_since_epoch().count() << " " << scan_end.time_since_epoch().count() << "\n";
+	std::cout << msg.str();
 }
 
 bool SortedRunMergerLocalState::TaskFinished() const {
@@ -607,6 +622,7 @@ void SortedRunMergerLocalState::AcquirePartitionBoundaries(SortedRunMergerGlobal
 }
 
 void SortedRunMergerLocalState::MergePartition(SortedRunMergerGlobalState &gstate) {
+	const auto begin = SteadyClock::now();
 	switch (iterator_state_type) {
 	case BlockIteratorStateType::IN_MEMORY:
 		// if (gstate.merger.use_filter) {
@@ -622,6 +638,11 @@ void SortedRunMergerLocalState::MergePartition(SortedRunMergerGlobalState &gstat
 		throw NotImplementedException("SortedRunMergerLocalState::MergePartition for %s",
 		                              EnumUtil::ToString(iterator_state_type));
 	}
+	const auto end = SteadyClock::now();
+	if (!merge_begin) {
+		merge_begin = begin;
+	}
+	merge_end = end;
 }
 
 template <class STATE>
@@ -802,8 +823,8 @@ void SortedRunMergerLocalState::ScanPartition(SortedRunMergerGlobalState &gstate
 template <SortKeyType SORT_KEY_TYPE, bool HAS_POS_LIST>
 void SortedRunMergerLocalState::TemplatedScanPartition(SortedRunMergerGlobalState &gstate, DataChunk &chunk) {
 	using SORT_KEY = SortKey<SORT_KEY_TYPE>;
-
 	// Grab pointers to sort keys
+	const auto begin = SteadyClock::now();
 	const auto merged_partition_keys = reinterpret_cast<SORT_KEY *>(merged_partition.get()) + merged_partition_index;
 	const auto sort_keys = FlatVector::GetData<SORT_KEY *>(sort_key_pointers);
 
@@ -853,6 +874,12 @@ void SortedRunMergerLocalState::TemplatedScanPartition(SortedRunMergerGlobalStat
 		// msg << "worker " << my_id << " wrote " << chunk.ToString();
 		// std::cout << msg.str();
 	}
+
+	const auto end = SteadyClock::now();
+	if (!scan_begin) {
+		scan_begin = begin;
+	}
+	scan_end = end;
 }
 
 void SortedRunMergerLocalState::MaterializePartition(SortedRunMergerGlobalState &gstate) {

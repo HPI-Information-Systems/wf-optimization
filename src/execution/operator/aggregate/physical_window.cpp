@@ -807,6 +807,7 @@ public:
 	using TaskPtr = optional_ptr<Task>;
 
 	explicit WindowLocalSourceState(WindowGlobalSourceState &gsource);
+	~WindowLocalSourceState();
 
 	void ReleaseLocalStates() {
 		auto &local_states = window_hash_group->thread_states.at(task->thread_idx);
@@ -837,8 +838,6 @@ public:
 	//! Buffer for window results
 	DataChunk output_chunk;
 
-	std::atomic<uint32_t> source_exec_id{0};
-
 protected:
 	//! Compute a mask range
 	void Mask(ExecutionContext &context, InterruptState &interrupt);
@@ -861,6 +860,10 @@ protected:
 	//! Storage and evaluation for chunks used in the evaluate phase
 	ExpressionExecutor eval_exec;
 	DataChunk eval_chunk;
+
+	uint32_t my_id = ++WindowOperatorConfig::get().idx;
+	std::optional<TimePoint> eval_begin;
+	TimePoint eval_end;
 };
 
 idx_t WindowHashGroup::InitTasks(idx_t per_thread_p) {
@@ -1017,6 +1020,13 @@ WindowLocalSourceState::WindowLocalSourceState(WindowGlobalSourceState &gsource)
 	++gsource.locals;
 }
 
+WindowLocalSourceState::~WindowLocalSourceState() {
+	auto msg = std::stringstream{};
+	msg << "WindowLocalSourceState " << my_id << " frame/evaluate "
+		<< eval_begin->time_since_epoch().count() << " " << eval_end.time_since_epoch().count() << "\n";
+	std::cout << msg.str();
+}
+
 bool WindowGlobalSourceState::TryNextTask(TaskPtr &task, Task &task_local) {
 	auto guard = Lock();
 	FinishTask(task);
@@ -1103,6 +1113,10 @@ void WindowLocalSourceState::ExecuteTask(ExecutionContext &context, DataChunk &r
 	// Update the hash group
 	window_hash_group = gsource.window_hash_groups[task->group_idx].get();
 
+	if (!eval_begin) {
+		eval_begin = SteadyClock::now();
+	}
+
 	// Process the new state
 	switch (task->stage) {
 	case WindowGroupStage::MASK:
@@ -1127,61 +1141,22 @@ void WindowLocalSourceState::ExecuteTask(ExecutionContext &context, DataChunk &r
 
 	// Count this task as finished.
 	if (TaskFinished()) {
+		eval_end = SteadyClock::now();
 		++gsource.finished;
 	}
 }
 
 void WindowLocalSourceState::GetData(ExecutionContext &context, DataChunk &result, InterruptState &interrupt) {
 	D_ASSERT(window_hash_group->GetStage() == WindowGroupStage::GETDATA);
-
-	// if (WindowOperatorConfig::get().do_early_out) {
-	// 	const auto lock = lock_guard{window_hash_group->partition_begin_lock};
-	// 	if (!window_hash_group->partition_begins_sorted) {
-	// 		std::sort(window_hash_group->partition_begins.begin(), window_hash_group->partition_begins.end());
-	// 		window_hash_group->partition_begins_sorted = true;
-	// 	}
-	// }
-
 	D_ASSERT(!gsource.early_out || std::is_sorted(window_hash_group->partition_begins[task->begin_idx].cbegin(), window_hash_group->partition_begins[task->begin_idx].cend()));
 
 
-	// std::cout << "\nSource exec " << ++source_exec_id << "\n";
-	// std::cout << "\nWindowLocalSourceState::GetData "  << window_hash_group->count << " " << window_hash_group->blocks << "  "
-	// << window_hash_group->partition_mask.ToString() <<  "\n";
-	// "  p_begins: " << print_vec(window_hash_group->partition_begins) <<
 	window_hash_group->UpdateScanner(scanner, task->begin_idx);
 	batch_index = window_hash_group->batch_base + task->begin_idx;
 
 	const auto position = scanner->Scanned();
 	auto &input_chunk = scanner->chunk;
 	scanner->Scan();
-
-	const auto print_vec = [](const auto& vec) {
-		auto stream = std::stringstream{};
-		stream << "{ ";
-		for (auto it = vec.cbegin(); it != vec.cend(); ++it) {
-			if (it != vec.begin()) {
-				stream << ", ";
-			}
-			stream << *it;
-		}
-		stream << " }";
-
-		return stream.str();
-	};
-
-	// if (gsource.early_out) {
-	// 	std::cout << "\nSource exec " + std::to_string(++source_exec_id) + ", group " + std::to_string(task->group_idx) + " partition begins: " + print_vec(window_hash_group->partition_begins[task->begin_idx]) + "\n";
-
-	// }
-
-	// if (gsource.early_out) {
-	// 	const auto& partition_begins = window_hash_group->partition_begins[task->begin_idx];
-	// 	if (!std::is_sorted(partition_begins.cbegin(), partition_begins.cend())) {
-	// 		throw std::runtime_error("Not sorted for " + std::to_string(position) + ":/");
-	// 	}
-	// 	std::cout << "Partition begins: " + print_vec(partition_begins) + "\n";
-	// }
 
 	const auto &executors = gsource.gsink.executors;
 	auto &gestates = window_hash_group->gestates;

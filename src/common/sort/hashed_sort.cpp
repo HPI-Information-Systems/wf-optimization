@@ -291,6 +291,7 @@ public:
 	using GroupingAppend = unique_ptr<PartitionedTupleDataAppendState>;
 
 	HashedSortLocalSinkState(ExecutionContext &context, const HashedSort &hashed_sort);
+	~HashedSortLocalSinkState();
 
 	//! Global state
 	const HashedSort &hashed_sort;
@@ -329,6 +330,12 @@ public:
 
 	HyperLogLog unique_partition_values;
 	idx_t hashed_tuples{0};
+
+	idx_t my_id{++WindowOperatorConfig::get().idx};
+	std::optional<TimePoint> sink_begin;
+	TimePoint sink_end;
+	std::optional<TimePoint> sort_begin;
+	TimePoint sort_end;
 };
 
 HashedSortLocalSinkState::HashedSortLocalSinkState(ExecutionContext &context, const HashedSort &hashed_sort)
@@ -373,6 +380,15 @@ HashedSortLocalSinkState::HashedSortLocalSinkState(ExecutionContext &context, co
 		unsorted = make_uniq<ColumnDataCollection>(context.client, hashed_sort.payload_types);
 		unsorted->InitializeAppend(unsorted_append);
 	}
+}
+
+HashedSortLocalSinkState::~HashedSortLocalSinkState() {
+	auto msg = std::stringstream{};
+	msg << "HashedSortLocalSinkState " << my_id << " partition "
+		<< sink_begin->time_since_epoch().count() << " " << sink_end.time_since_epoch().count() << "\n"
+		<< "HashedSortLocalSinkState " << my_id << " sort "
+		<< sort_begin->time_since_epoch().count() << " " << sort_end.time_since_epoch().count() << "\n";
+	std::cout << msg.str();
 }
 
 void HashedSort::Synchronize(const GlobalSinkState &source, GlobalSinkState &target) const {
@@ -470,6 +486,7 @@ void resolve_radix_bits(idx_t radix_bits, const Functor& fn) {
 }
 
 SinkResultType HashedSort::Sink(ExecutionContext &context, DataChunk &input_chunk, OperatorSinkInput &sink) const {
+	const auto start = SteadyClock::now();
 	auto &gstate = sink.global_state.Cast<HashedSortGlobalSinkState>();
 	auto &lstate = sink.local_state.Cast<HashedSortLocalSinkState>();
 	gstate.count += input_chunk.size();
@@ -592,6 +609,11 @@ SinkResultType HashedSort::Sink(ExecutionContext &context, DataChunk &input_chun
 	}
 
 	local_grouping->Append(*grouping_append, payload_chunk, selection, result_count);
+	const auto end = SteadyClock::now();
+	if (!lstate.sink_begin) {
+		lstate.sink_begin = start;
+	}
+	lstate.sink_end = end;
 
 	return SinkResultType::NEED_MORE_INPUT;
 }
@@ -599,6 +621,7 @@ SinkResultType HashedSort::Sink(ExecutionContext &context, DataChunk &input_chun
 SinkCombineResultType HashedSort::Combine(ExecutionContext &context, OperatorSinkCombineInput &combine) const {
 	auto &gstate = combine.global_state.Cast<HashedSortGlobalSinkState>();
 	auto &lstate = combine.local_state.Cast<HashedSortLocalSinkState>();
+	const auto begin = SteadyClock::now();
 
 	// Window::Combine:
 	// Sort::Sink then Sort::Combine (per hash partition)
@@ -675,6 +698,12 @@ SinkCombineResultType HashedSort::Combine(ExecutionContext &context, OperatorSin
 		OperatorSinkCombineInput lcombine {*hash_group.sort_global, *lstate.sort_local, combine.interrupt_state};
 		sort->Combine(context, lcombine);
 	}
+
+	const auto end = SteadyClock::now();
+	if (!lstate.sort_begin) {
+		lstate.sort_begin = begin;
+	}
+	lstate.sort_end = end;
 
 	return SinkCombineResultType::FINISHED;
 }

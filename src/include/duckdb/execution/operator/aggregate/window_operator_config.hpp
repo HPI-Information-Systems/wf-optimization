@@ -4,8 +4,12 @@
 #include <sstream>
 #include <stdexcept>
 #include <atomic>
+#include <chrono>
 
 namespace duckdb {
+
+using SteadyClock = std::chrono::steady_clock;
+using TimePoint = std::chrono::time_point<SteadyClock>;
 
 class WindowOperatorConfig {
  public:
