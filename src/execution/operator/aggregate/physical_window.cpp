@@ -1021,10 +1021,14 @@ WindowLocalSourceState::WindowLocalSourceState(WindowGlobalSourceState &gsource)
 }
 
 WindowLocalSourceState::~WindowLocalSourceState() {
-	auto msg = std::stringstream{};
-	msg << "WindowLocalSourceState " << my_id << " frame/evaluate "
-		<< eval_begin->time_since_epoch().count() << " " << eval_end.time_since_epoch().count() << "\n";
-	std::cout << msg.str();
+	// auto msg = std::stringstream{};
+	// const auto& conf = WindowOperatorConfig::get();
+	// msg << "WindowLocalSourceState " << my_id << " frame/evaluate "
+	// 	<< conf.since_start(*eval_begin).count() << " " << conf.since_start(eval_end).count() << "\n";
+	// std::cout << msg.str();
+	auto& conf = WindowOperatorConfig::get();
+	const auto pos = my_id % conf.threads;
+	conf.evaluation_times[pos] = std::make_pair(*eval_begin, eval_end);
 }
 
 bool WindowGlobalSourceState::TryNextTask(TaskPtr &task, Task &task_local) {

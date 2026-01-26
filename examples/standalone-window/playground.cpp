@@ -119,6 +119,23 @@ int main(int argc, char* argv[]) {
         level_upper = static_cast<uint8_t>(*requested_level);
     }
 
+    const auto reset_metrics = [&]() {
+        auto& config = WindowOperatorConfig::get();
+        config.expected_partitions = partition_count;
+        config.threads = core_count;
+        config.partition_times.clear();
+        config.local_sort_times.clear();
+        config.evaluation_times.clear();
+        config.merge_times.clear();
+        config.write_times.clear();
+        config.partition_times.resize(core_count);
+        config.local_sort_times.resize(core_count);
+        config.evaluation_times.resize(core_count);
+        config.threads = core_count;
+        config.start = SteadyClock::now();
+
+    };
+
     for (auto level_int = level_lower; level_int <= level_upper; ++level_int) {
         const auto level = static_cast<WindowOperatorConfig::OptimizationLevel>(level_int);
         if (level == WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsSimulated
@@ -165,8 +182,7 @@ int main(int argc, char* argv[]) {
         WindowOperatorConfig::get().shrink_partitions_adaptive = level >= WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptive || is_combined;
         WindowOperatorConfig::get().use_adaptivity_context = level >= WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptiveContext || is_combined;
 
-        WindowOperatorConfig::get().expected_partitions = partition_count;
-
+        reset_metrics();
         string query = WindowOperatorConfig::get().do_filter  ? // WindowOperatorConfig::get().shrink_runs ?
          "SELECT * from (select a, b, rank() OVER (PARTITION BY a ORDER BY b) rnk FROM eval) t" :
           "SELECT * from (select a, b, rank() OVER (PARTITION BY a ORDER BY b) rnk FROM eval) t WHERE rnk <= " + std::to_string(predicate_value);
@@ -182,9 +198,55 @@ int main(int argc, char* argv[]) {
         auto result = unique_ptr<MaterializedQueryResult>{};
         const auto start = std::chrono::steady_clock::now();
         for (auto run = 0; run < num_runs; ++run) {
+            reset_metrics();
             result = con.Query(query);
             result_count += result->RowCount();
             // result->Print();
+
+            auto& conf = WindowOperatorConfig::get();
+            std::cout << "PARTITION\n";
+            for (const auto& [start, end] : conf.partition_times) {
+                if (start == TimePoint{} && end == TimePoint{}) {
+                    continue;
+                }
+                std::cout << conf.since_start(start).count() << "\t" << conf.since_start(end).count() << "\n";
+            }
+            std::cout << "\n";
+
+            std::cout << "LOCAL SORT\n";
+            for (const auto& [start, end] : conf.local_sort_times) {
+                if (start == TimePoint{} && end == TimePoint{}) {
+                    continue;
+                }
+                std::cout << conf.since_start(start).count() << "\t" << conf.since_start(end).count() << "\n";
+            }
+            std::cout << "\n";
+
+            std::cout << "MERGE\n";
+            for (const auto& [start, end] : conf.merge_times) {
+                if (start == TimePoint{} && end == TimePoint{}) {
+                    continue;
+                }
+                std::cout << conf.since_start(start).count() << "\t" << conf.since_start(end).count() << "\n";
+            }
+            std::cout << "\n";
+
+            std::cout << "CREATE CHUNKS FROM GLOBAL RADIX PARTITIONS\n";
+            for (const auto& [start, end] : conf.write_times) {
+                if (start == TimePoint{} && end == TimePoint{}) {
+                    continue;
+                }
+                std::cout << conf.since_start(start).count() << "\t" << conf.since_start(end).count() << "\n";
+            }
+            std::cout << "\n";
+
+            std::cout << "FRAMING AND FUNCTION COMPUTATION\n";
+            for (const auto& [start, end] : conf.evaluation_times) {
+                if (start == TimePoint{} && end == TimePoint{}) {
+                    continue;
+                }
+                std::cout << conf.since_start(start).count() << "\t" << conf.since_start(end).count() << "\n";
+            }
         }
 
         const auto duration = std::chrono::steady_clock::now() - start;

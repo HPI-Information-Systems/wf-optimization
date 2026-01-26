@@ -332,15 +332,15 @@ SortedRunMergerLocalState::SortedRunMergerLocalState(SortedRunMergerGlobalState 
 			                              EnumUtil::ToString(iterator_state_type));
 		}
 	}
+	// ++WindowOperatorConfig::get().merger_states_init;
 }
 
 SortedRunMergerLocalState::~SortedRunMergerLocalState() {
-	auto msg = std::stringstream{};
-	msg << "SortedRunMergerLocalState " << my_id << " merge "
-		<< merge_begin->time_since_epoch().count() << " " << merge_end.time_since_epoch().count() << "\n"
-		<< "SortedRunMergerLocalState " << my_id << " construct chunks "
-		<< scan_begin->time_since_epoch().count() << " " << scan_end.time_since_epoch().count() << "\n";
-	std::cout << msg.str();
+	auto& conf = WindowOperatorConfig::get();
+	const auto lock = std::lock_guard{conf.append_mutex};
+	conf.merge_times.emplace_back(*merge_begin, merge_end);
+	conf.write_times.emplace_back(*scan_begin, scan_end);
+	// ++conf.merger_states_done;
 }
 
 bool SortedRunMergerLocalState::TaskFinished() const {

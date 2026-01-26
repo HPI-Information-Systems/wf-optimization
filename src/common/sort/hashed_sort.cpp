@@ -383,12 +383,10 @@ HashedSortLocalSinkState::HashedSortLocalSinkState(ExecutionContext &context, co
 }
 
 HashedSortLocalSinkState::~HashedSortLocalSinkState() {
-	auto msg = std::stringstream{};
-	msg << "HashedSortLocalSinkState " << my_id << " partition "
-		<< sink_begin->time_since_epoch().count() << " " << sink_end.time_since_epoch().count() << "\n"
-		<< "HashedSortLocalSinkState " << my_id << " sort "
-		<< sort_begin->time_since_epoch().count() << " " << sort_end.time_since_epoch().count() << "\n";
-	std::cout << msg.str();
+	auto& conf = WindowOperatorConfig::get();
+	const auto pos = my_id % conf.threads;
+	conf.partition_times[pos] = std::make_pair(*sink_begin, sink_end);
+	conf.local_sort_times[pos] = std::make_pair(*sort_begin, sort_end);
 }
 
 void HashedSort::Synchronize(const GlobalSinkState &source, GlobalSinkState &target) const {
@@ -486,10 +484,13 @@ void resolve_radix_bits(idx_t radix_bits, const Functor& fn) {
 }
 
 SinkResultType HashedSort::Sink(ExecutionContext &context, DataChunk &input_chunk, OperatorSinkInput &sink) const {
-	const auto start = SteadyClock::now();
 	auto &gstate = sink.global_state.Cast<HashedSortGlobalSinkState>();
 	auto &lstate = sink.local_state.Cast<HashedSortLocalSinkState>();
 	gstate.count += input_chunk.size();
+
+	if (!lstate.sink_begin) {
+		lstate.sink_begin = SteadyClock::now();
+	}
 
 	// Window::Sink:
 	// PartitionedTupleData::Append
@@ -566,6 +567,7 @@ SinkResultType HashedSort::Sink(ExecutionContext &context, DataChunk &input_chun
 		gstate.UpdateLocalPartition(local_grouping, grouping_append);
 		local_grouping->Append(*grouping_append, payload_chunk);
 
+		lstate.sink_end = SteadyClock::now();
 		return SinkResultType::NEED_MORE_INPUT;
 	}
 
@@ -609,11 +611,7 @@ SinkResultType HashedSort::Sink(ExecutionContext &context, DataChunk &input_chun
 	}
 
 	local_grouping->Append(*grouping_append, payload_chunk, selection, result_count);
-	const auto end = SteadyClock::now();
-	if (!lstate.sink_begin) {
-		lstate.sink_begin = start;
-	}
-	lstate.sink_end = end;
+	lstate.sink_end = SteadyClock::now();
 
 	return SinkResultType::NEED_MORE_INPUT;
 }

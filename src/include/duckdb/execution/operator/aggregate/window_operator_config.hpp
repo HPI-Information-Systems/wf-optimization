@@ -10,6 +10,7 @@ namespace duckdb {
 
 using SteadyClock = std::chrono::steady_clock;
 using TimePoint = std::chrono::time_point<SteadyClock>;
+using Duration = std::chrono::nanoseconds;
 
 class WindowOperatorConfig {
  public:
@@ -26,7 +27,7 @@ class WindowOperatorConfig {
   };
 
   inline static WindowOperatorConfig& get() {
-    static auto instance = WindowOperatorConfig{};
+    static WindowOperatorConfig instance{};
     return instance;
   }
 
@@ -45,71 +46,85 @@ class WindowOperatorConfig {
   uint64_t expected_partitions{0};
   double shrink_partitions_threshold{0.2};
   std::atomic_uint32_t idx{0};
+  TimePoint start;
+  idx_t threads{0};
+  std::vector<std::pair<TimePoint, TimePoint>> partition_times;
+  std::vector<std::pair<TimePoint, TimePoint>> local_sort_times;
+  std::vector<std::pair<TimePoint, TimePoint>> evaluation_times;
+  std::vector<std::pair<TimePoint, TimePoint>> merge_times;
+  std::vector<std::pair<TimePoint, TimePoint>> write_times;
+  std::mutex append_mutex;
 
   friend std::ostream& operator<<(std::ostream& stream, WindowOperatorConfig::OptimizationLevel level) {
-  switch (level) {
-    case WindowOperatorConfig::OptimizationLevel::None:
-      stream << "Baseline";
-      break;
-    case WindowOperatorConfig::OptimizationLevel::Filter:
-      stream << "Filter";
-      break;
-    case WindowOperatorConfig::OptimizationLevel::EarlyOut:
-      stream << "EarlyOut";
-      break;
-    case WindowOperatorConfig::OptimizationLevel::ShrinkRuns:
-      stream << "ShrinkRuns";
-      break;
-    case WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsSimulated:
-      stream << "ShrinkPartitionsSimulated";
-      break;
-    case WindowOperatorConfig::OptimizationLevel::ShrinkPartitions:
-      stream << "ShrinkPartitions";
-      break;
-    case WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptive:
-      stream << "ShrinkPartitionsAdaptive";
-      break;
-    case WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptiveContext:
-      stream << "ShrinkPartitionsAdaptiveContext";
-      break;
-    case WindowOperatorConfig::OptimizationLevel::Combined:
-      stream << "Combined";
-      break;
+    switch (level) {
+      case WindowOperatorConfig::OptimizationLevel::None:
+        stream << "Baseline";
+        break;
+      case WindowOperatorConfig::OptimizationLevel::Filter:
+        stream << "Filter";
+        break;
+      case WindowOperatorConfig::OptimizationLevel::EarlyOut:
+        stream << "EarlyOut";
+        break;
+      case WindowOperatorConfig::OptimizationLevel::ShrinkRuns:
+        stream << "ShrinkRuns";
+        break;
+      case WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsSimulated:
+        stream << "ShrinkPartitionsSimulated";
+        break;
+      case WindowOperatorConfig::OptimizationLevel::ShrinkPartitions:
+        stream << "ShrinkPartitions";
+        break;
+      case WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptive:
+        stream << "ShrinkPartitionsAdaptive";
+        break;
+      case WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptiveContext:
+        stream << "ShrinkPartitionsAdaptiveContext";
+        break;
+      case WindowOperatorConfig::OptimizationLevel::Combined:
+        stream << "Combined";
+        break;
+    }
+    return stream;
   }
-  return stream;
-}
+
+  inline Duration since_start(const TimePoint& tp) const {
+    return tp - start;
+  }
 
  protected:
   WindowOperatorConfig() = default;
-  WindowOperatorConfig(WindowOperatorConfig&& rhs) noexcept {
-    do_filter = rhs.do_filter;
-    do_early_out = rhs.do_early_out;
-    skip_sort = rhs.skip_sort;
-    shrink_runs = rhs.shrink_runs;
-    shrink_partitions = rhs.shrink_partitions;
-    simulate_shrink_partitions = rhs.simulate_shrink_partitions;
-    shrink_partitions_adaptive = rhs.shrink_partitions_adaptive;
-    use_adaptivity_context = rhs.use_adaptivity_context;
-    predicate_value = rhs.predicate_value;
-    expected_partitions = rhs.expected_partitions;
-    shrink_partitions_threshold = rhs.shrink_partitions_threshold;
-    idx = rhs.idx.load();
-  };
-  WindowOperatorConfig& operator=(WindowOperatorConfig&& rhs) noexcept {
-    do_filter = rhs.do_filter;
-    do_early_out = rhs.do_early_out;
-    skip_sort = rhs.skip_sort;
-    shrink_runs = rhs.shrink_runs;
-    shrink_partitions = rhs.shrink_partitions;
-    simulate_shrink_partitions = rhs.simulate_shrink_partitions;
-    shrink_partitions_adaptive = rhs.shrink_partitions_adaptive;
-    use_adaptivity_context = rhs.use_adaptivity_context;
-    predicate_value = rhs.predicate_value;
-    expected_partitions = rhs.expected_partitions;
-    shrink_partitions_threshold = rhs.shrink_partitions_threshold;
-    idx = rhs.idx.load();
-    return *this;
-  };
+  // WindowOperatorConfig(WindowOperatorConfig&& rhs) noexcept {
+  //   do_filter = rhs.do_filter;
+  //   do_early_out = rhs.do_early_out;
+  //   skip_sort = rhs.skip_sort;
+  //   shrink_runs = rhs.shrink_runs;
+  //   shrink_partitions = rhs.shrink_partitions;
+  //   simulate_shrink_partitions = rhs.simulate_shrink_partitions;
+  //   shrink_partitions_adaptive = rhs.shrink_partitions_adaptive;
+  //   use_adaptivity_context = rhs.use_adaptivity_context;
+  //   predicate_value = rhs.predicate_value;
+  //   expected_partitions = rhs.expected_partitions;
+  //   shrink_partitions_threshold = rhs.shrink_partitions_threshold;
+  //   idx = rhs.idx.load();
+  //   start = rhs.start;
+  // };
+  // WindowOperatorConfig& operator=(WindowOperatorConfig&& rhs) noexcept {
+  //   do_filter = rhs.do_filter;
+  //   do_early_out = rhs.do_early_out;
+  //   skip_sort = rhs.skip_sort;
+  //   shrink_runs = rhs.shrink_runs;
+  //   shrink_partitions = rhs.shrink_partitions;
+  //   simulate_shrink_partitions = rhs.simulate_shrink_partitions;
+  //   shrink_partitions_adaptive = rhs.shrink_partitions_adaptive;
+  //   use_adaptivity_context = rhs.use_adaptivity_context;
+  //   predicate_value = rhs.predicate_value;
+  //   expected_partitions = rhs.expected_partitions;
+  //   shrink_partitions_threshold = rhs.shrink_partitions_threshold;
+  //   idx = rhs.idx.load();
+  //   start = rhs.start;
+  //   return *this;
+  // };
   ~WindowOperatorConfig() = default;
 };
 
