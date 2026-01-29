@@ -24,6 +24,12 @@ target_link_libraries(microbench duckdb)
 add_executable(playground playground.cpp)
 target_link_libraries(playground duckdb)
 
+add_executable(playground_baca playground_baca.cpp)
+target_link_libraries(playground_baca duckdb)
+
+add_executable(microbench_baca microbench_baca.cpp)
+target_link_libraries(microbench_baca duckdb)
+
 add_executable(adaptive_strategy determine_adaptive_thresholds.cpp)
 target_link_libraries(adaptive_strategy duckdb)
 
