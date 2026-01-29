@@ -52,6 +52,7 @@ int main(int argc, char* argv[]) {
     auto num_runs = size_t{1};
     auto requested_level = std::optional<WindowOperatorConfig::OptimizationLevel>{};
     auto warmup = false;
+    auto distinct = false;
 
     for (auto arg_id = 1; arg_id < argc; ++arg_id) {
         const auto argument = std::string{argv[arg_id]};
@@ -67,6 +68,8 @@ int main(int argc, char* argv[]) {
             requested_level = str_to_optimization_level(std::string{argv[++arg_id]});
         } else if (argument == "--warmup" or argument == "-w") {
             warmup = true;
+        } else if (argument == "--distinct" or argument == "-d") {
+            distinct = true;
         } else if (arg_id == 1) {
             row_count = std::stoul(argument);
         } else if (arg_id == 2) {
@@ -114,7 +117,9 @@ int main(int argc, char* argv[]) {
     std::cout << row_count << " rows, " << partition_count << " partitions\n";
 
 
-    string query = "select t1.a, t1.b from eval t1 join lateral (select a, b from eval e2 where e2.a = t1.a order by b limit 3) t2 ON t1.a = t2.a and t1.b = t2.b;";
+    string query = distinct ?
+        "select e.* from eval e join (select t2.a, t2.b from (select distinct a from eval) t1 join lateral (select a, b from eval e2 where e2.a = t1.a order by b limit 3) t2 ON t1.a = t2.a) t3 on e.b = t3.b and e.a = t3.a;"
+        : "select t1.a, t1.b from eval t1 join lateral (select a, b from eval e2 where e2.a = t1.a order by b limit 3) t2 ON t1.a = t2.a and t1.b = t2.b;";
 
 
     // std::cout << "== Run ==\n";

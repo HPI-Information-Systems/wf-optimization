@@ -56,7 +56,7 @@ int main(int argc, char* argv[]) {
 	auto core_count = std::stoul(execute_command("nproc"));
 	auto skewed = false;
 	auto test = false;
-	auto requested_level = std::optional<WindowOperatorConfig::OptimizationLevel>{};
+	auto distinct = false;
 
 	for (auto arg_id = 1; arg_id < argc; ++arg_id) {
 		const auto argument = std::string{argv[arg_id]};
@@ -66,8 +66,8 @@ int main(int argc, char* argv[]) {
 			skewed = true;
 		} else if (argument == "--test") {
 			test = true;
-		} else if (argument == "--level" or argument == "-l") {
-            requested_level = str_to_optimization_level(std::string{argv[++arg_id]});
+		} else if (argument == "--distinct" or argument == "-d") {
+            distinct = true;
         } else if (arg_id == 1) {
 			row_count = std::stoi(argument);
 		} else {
@@ -138,7 +138,7 @@ int main(int argc, char* argv[]) {
 	if (!test) {
 		auto result_filename = std::stringstream{};
 		result_filename << "microbenchmark_baca_";
-		result_filename << (skewed ? "skewed_" : std::to_string(row_count) + "-rows_") << (core_count == 1 ? "st" : "mt") << ".csv";
+		result_filename << (distinct ? "distinct_" : "") << (skewed ? "skewed_" : std::to_string(row_count) + "-rows_") << (core_count == 1 ? "st" : "mt") << ".csv";
 		ofstream.open(result_filename.str());
 		ofstream << "CONFIGURATION,ROW_COUNT,PARTITION_COUNT,RESULTS_PER_PARTITION,RESULT_COUNT,RUNTIME_NS\n";
 		ofstream << std::fixed;
@@ -163,7 +163,9 @@ int main(int argc, char* argv[]) {
 		con.Query("COPY eval FROM '" + filename + "' WITH (FORMAT CSV, DELIMITER ',', NULL '', QUOTE '\"');");
 		con.Commit();
 
-		string query = "select t1.a, t1.b from eval t1 join lateral (select a, b from eval e2 where e2.a = t1.a order by b limit 3) t2 ON t1.a = t2.a and t1.b = t2.b";
+		string query = distinct ?
+        "select e.* from eval e join (select t2.a, t2.b from (select distinct a from eval) t1 join lateral (select a, b from eval e2 where e2.a = t1.a order by b limit 3) t2 ON t1.a = t2.a) t3 on e.b = t3.b and e.a = t3.a;"
+        : "select t1.a, t1.b from eval t1 join lateral (select a, b from eval e2 where e2.a = t1.a order by b limit 3) t2 ON t1.a = t2.a and t1.b = t2.b;";
 
 		// One warm-up run.
 		const auto init_result_count = con.Query(query)->RowCount();
