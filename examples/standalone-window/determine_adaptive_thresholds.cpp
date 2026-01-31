@@ -134,7 +134,7 @@ int main(int argc, char* argv[]) {
 
 
 	auto ofstream = std::ofstream{};
-	const auto result_filename = "adaptivity_thresholds_" + (skewed ? std::string{"skewed_"} : std::string{""}) + (core_count == 1 ? "st" : "mt") + ".csv";
+	const auto result_filename = "adaptivity_thresholds_inverse" + (skewed ? std::string{"skewed_"} : std::string{""}) + (core_count == 1 ? "st" : "mt") + ".csv";
 	ofstream.open(result_filename);
 	ofstream << "CONFIGURATION,ROW_COUNT,PARTITION_COUNT,RESULTS_PER_PARTITION,RESULT_COUNT,THRESHOLD,RUNTIME_MS\n";
 	ofstream << std::fixed;
@@ -161,16 +161,19 @@ int main(int argc, char* argv[]) {
 		con.Query("COPY eval FROM '" + filename + "' WITH (FORMAT CSV, DELIMITER ',', NULL '', QUOTE '\"');");
 		con.Commit();
 
-		for (const auto level : {WindowOperatorConfig::OptimizationLevel::None, WindowOperatorConfig::OptimizationLevel::ShrinkPartitions, WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptive, WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptiveContext}) {
+		for (const auto level : {WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptiveContext}) {
 
 			const auto level_str = optimization_level_to_str(level);
 			const auto test_thresholds = level >= WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptive;
-			auto thresholds = test_thresholds ? std::vector<double>{0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3} : std::vector<double>{1.0};
-			if (level == WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptive) {
-				thresholds.push_back(1.5);
-				thresholds.push_back(2.0);
-				thresholds.push_back(3.0);
-			}
+			// auto thresholds = test_thresholds ? std::vector<double>{0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3} : std::vector<double>{1.0};
+			// if (level == WindowOperatorConfig::OptimizationLevel::ShrinkPartitionsAdaptive) {
+			// 	thresholds.push_back(1.5);
+			// 	thresholds.push_back(2.0);
+			// 	thresholds.push_back(3.0);
+			// }
+
+			const auto thresholds = std::vector<double>{1., 1./2., 1./3., 1./4., 1./5., 1./6., 1./7., 1./8., 1./9., 1./10.};
+
 
 			const auto predicate_value = uint64_t{3};
 			const auto is_combined = level == WindowOperatorConfig::OptimizationLevel::Combined;
