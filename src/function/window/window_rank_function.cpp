@@ -6,8 +6,6 @@
 //
 #include <functional>
 #include <type_traits>
-#include <iostream>
-#include <sstream>
 
 namespace duckdb {
 
@@ -38,8 +36,6 @@ public:
 
 	//! The token tree for ORDER BY arguments
 	unique_ptr<WindowTokenTree> token_tree;
-
-	std::atomic<uint32_t> exec_id{0};
 };
 
 //===--------------------------------------------------------------------===//
@@ -146,45 +142,34 @@ void WindowRankExecutor<Comparator, early_out>::EvaluateInternal(ExecutionContex
 
 
 	const auto comparator = Comparator{};
-
-	// const auto my_id = ++gpeer.exec_id;
 	const auto predicate_value = lpeer.predicate_value;
 
-	// std::cout << "ID " << my_id << "\trow_idx " << row_idx << "\tcount " << count << "\n";
-	// eval_chunk.Print();
-
 	auto match_count = idx_t{0};
-	if constexpr (!std::is_same<Comparator, NoneComparator>::value) {
+	if constexpr (!std::is_same_v<Comparator, std::false_type>) {
 		lpeer.sel.Initialize(count);
 		lpeer.has_filter = true;
 	}
 
 	if (gpeer.use_framing) {
-		// std::cout << "use framing\n";
 		auto frame_begin = FlatVector::GetData<const idx_t>(lpeer.bounds.data[FRAME_BEGIN]);
 		auto frame_end = FlatVector::GetData<const idx_t>(lpeer.bounds.data[FRAME_END]);
 		if (gpeer.token_tree) {
-			// std::cout << "token tree\n";
 			for (idx_t i = 0; i < count; ++i, ++row_idx) {
 				const auto rnk = UnsafeNumericCast<int64_t>(gpeer.token_tree->Rank(frame_begin[i], frame_end[i], row_idx));
 				rdata[i] = rnk;
 
-				if constexpr (!std::is_same<Comparator, NoneComparator>::value) {
+				if constexpr (!std::is_same<Comparator, std::false_type>::value) {
 					if (comparator(rnk, predicate_value)) {
 						lpeer.sel.set_index(match_count++, i);
 						continue;
 					}
 
 					if constexpr (early_out) {
-						// auto msg = std::stringstream{};
-						// msg << __FILE__ << ":" << __LINE__ << "  " << match_count << "\n";
-						// std::cout << msg.str();
 						break;
 					}
 				}
 			}
 		} else {
-			// std::cout << "no token tree\n";
 			auto peer_begin = FlatVector::GetData<const idx_t>(lpeer.bounds.data[PEER_BEGIN]);
 			for (idx_t i = 0; i < count; ++i, ++row_idx) {
 				//	Clamp peer to the frame
@@ -192,28 +177,23 @@ void WindowRankExecutor<Comparator, early_out>::EvaluateInternal(ExecutionContex
 				const auto rnk = UnsafeNumericCast<int64_t>((frame_peer_begin - frame_begin[i]) + 1);
 				rdata[i] = rnk;
 
-				if constexpr (!std::is_same<Comparator, NoneComparator>::value) {
+				if constexpr (!std::is_same_v<Comparator, std::false_type>) {
 					if (comparator(rnk, predicate_value)) {
 						lpeer.sel.set_index(match_count++, i);
 						continue;
 					}
 					if constexpr (early_out) {
-						// auto msg = std::stringstream{};
-						// msg << __FILE__ << ":" << __LINE__ << "  " << match_count << "\n";
-						// std::cout << msg.str();
 						break;
 					}
 				}
 			}
 		}
 
-		if constexpr (!std::is_same<Comparator, NoneComparator>::value) {
+		if constexpr (!std::is_same_v<Comparator, std::false_type>) {
 			lpeer.match_count = match_count;
 		}
 		return;
 	}
-
-	// std::cout << "no framing\n";
 
 	//	Reset to "previous" row
 	auto partition_begin = FlatVector::GetData<const idx_t>(lpeer.bounds.data[PARTITION_BEGIN]);
@@ -228,52 +208,18 @@ void WindowRankExecutor<Comparator, early_out>::EvaluateInternal(ExecutionContex
 		}
 	}
 
-	// if (!std::is_same<Comparator, NoneComparator>::value) {
-	// 	std::cout << "filter\n";
-	// }
-	// if (early_out) {
-	// 	std::cout << "early_out\n";
-	// }
-	// lpeer.bounds.Print();
-	// std::cout << lpeer.bounds.data[PARTITION_BEGIN].ToString(lpeer.bounds.size());
-	// std::cout << "\n";
-	// std::cout << lpeer.bounds.data[PARTITION_END].ToString(lpeer.bounds.size());
-	// std::cout << "\n";
-
-	// const auto print_vec = [](const auto& vec) {
-	// 	auto stream = std::stringstream{};
-	// 	stream << "{ ";
-	// 	for (auto it = vec.cbegin(); it != vec.cend(); ++it) {
-	// 		if (it != vec.begin()) {
-	// 			stream << ", ";
-	// 		}
-	// 		stream << *it;
-	// 	}
-	// 	stream << " }";
-
-	// 	return stream.str();
-	// };
-
-	// std::cout << "partition begins: " << print_vec(lpeer.partition_begins) << "\n";
-
-	// auto ranks = std::stringstream{};
-
-	// std::cout << "count=" << count << "  row_idx=" << row_idx << "\n";
-
 	for (idx_t i = 0; i < count; ++i, ++row_idx) {
 		lpeer.NextRank(partition_begin[i], peer_begin[i], row_idx);
 		const auto rnk = UnsafeNumericCast<int64_t>(lpeer.rank);
 		rdata[i] = rnk;
-		// std::cout << "\ti=" << i << "  row_idx=" << row_idx << "  rnk=" << rnk << "  val=" << predicate_value  << "\n";
-		// ranks << lpeer.rank << " ";
-		if constexpr (!std::is_same<Comparator, NoneComparator>::value) {
+
+		// Co-Evaluation with Stop: Decide of tuples matches. If not, skip to the next WF partition in this chunk.
+		if constexpr (!std::is_same_v<Comparator, std::false_type>) {
 			if (comparator(rnk, predicate_value)) {
 				lpeer.sel.set_index(match_count++, i);
 				continue;
 			}
 			if constexpr (early_out) {
-				//const auto partition_end = FlatVector::GetData<const idx_t>(lpeer.bounds.data[PARTITION_END])[i];
-				// std::cout << "\t\tset i=" << i << "  row_idx=" << row_idx << "\n";
 				if (next_partition_begin == lpeer.partition_begins->cend()) {
 					break;
 				}
@@ -282,25 +228,16 @@ void WindowRankExecutor<Comparator, early_out>::EvaluateInternal(ExecutionContex
 				const auto diff = partition_end - row_idx - 1;
 				i += diff;
 				row_idx = partition_end - 1;
-
-				// auto msg = std::stringstream{};
-				// msg << __FILE__ << ":" << __LINE__ << "  " << match_count << "\n";
-				// std::cout << msg.str();
-				// break;
 			}
 		}
 	}
 
-	// ranks << "\n";
-	// std::cout << ranks.str();
-	// std::cout << "\n";
-
-	if constexpr (!std::is_same<Comparator, NoneComparator>::value) {
+	if constexpr (!std::is_same_v<Comparator, std::false_type>) {
 		lpeer.match_count = match_count;
 	}
 }
 
-template class WindowRankExecutor<NoneComparator, false>;
+template class WindowRankExecutor<std::false_type, false>;
 template class WindowRankExecutor<std::less_equal<int64_t>, false>;
 template class WindowRankExecutor<std::less_equal<int64_t>, true>;
 

@@ -79,10 +79,8 @@ int main(int argc, char* argv[]) {
 	auto* config = new DBConfig();
 	config->options.maximum_threads = core_count;
 	DuckDB db(nullptr, config);
-	// std::cout << db.NumberOfThreads() << "\n";
 	Connection con(db);
 	std::cout << "Using " << db.NumberOfThreads() << " core(s); with" << (skewed ? "" : "out") << " skew\n";
-	// con.SetAutoCommit(true);
 
 	const auto table_file_name = [&](auto p, auto r){
 		auto filename = std::stringstream{};
@@ -164,7 +162,7 @@ int main(int argc, char* argv[]) {
 		con.Commit();
 
 		string query = distinct ?
-        "select e.* from eval e join (select t2.a, t2.b from (select distinct a from eval) t1 join lateral (select a, b from eval e2 where e2.a = t1.a order by b limit 3) t2 ON t1.a = t2.a) t3 on e.b = t3.b and e.a = t3.a;"
+        "select e.a, e.b from eval e join (select t2.a, t2.b from (select distinct a from eval) t1 join lateral (select a, b from eval e2 where e2.a = t1.a order by b limit 3) t2 ON t1.a = t2.a) t3 on e.b = t3.b and e.a = t3.a;"
         : "select t1.a, t1.b from eval t1 join lateral (select a, b from eval e2 where e2.a = t1.a order by b limit 3) t2 ON t1.a = t2.a and t1.b = t2.b;";
 
 		// One warm-up run.
@@ -182,7 +180,6 @@ int main(int argc, char* argv[]) {
 		std::cout << "\t" << "Baca" << "\t" << result_count << "\t" <<  std::chrono::duration<double, std::milli>{duration}.count() << " ms\n";
 		if (!test) {
 			for (const auto& run_duration : run_durations) {
-				//ofstream << "CONFIGURATION,ROW_COUNT,PARTITION_COUNT,RESULT_COUNT,RUNTIME_NS\n";
 				ofstream << "Baca" << "," << run_row_count << "," << partition_count << "," << predicate_value << "," << init_result_count << "," << run_duration.count() << "\n";
 			}
 		}

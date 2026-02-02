@@ -2,8 +2,6 @@
 #include "duckdb/function/window/window_shared_expressions.hpp"
 #include "duckdb/planner/expression/bound_window_expression.hpp"
 
-#include <iostream>
-
 namespace duckdb {
 
 //===--------------------------------------------------------------------===//
@@ -22,8 +20,6 @@ void WindowExecutorBoundsLocalState::UpdateBounds(WindowExecutorGlobalState &gst
 	// Evaluate the row-level arguments
 	WindowInputExpression boundary_start(eval_chunk, gstate.executor.boundary_start_idx);
 	WindowInputExpression boundary_end(eval_chunk, gstate.executor.boundary_end_idx);
-
-	// std::cout << "update bounds: " << row_idx << "\n";
 
 	const auto count = eval_chunk.size();
 	state.Bounds(bounds, row_idx, range, count, boundary_start, boundary_end, partition_mask, order_mask);

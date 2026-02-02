@@ -7,8 +7,6 @@
 #include "duckdb/execution/operator/aggregate/window_operator_config.hpp"
 #include "duckdb/common/types/hyperloglog.hpp"
 
-#include <iostream>
-
 namespace duckdb {
 
 //===--------------------------------------------------------------------===//
@@ -42,8 +40,6 @@ HashedSortGroup::HashedSortGroup(ClientContext &client, optional_ptr<Sort> sort,
 		sort_global = sort->GetGlobalSinkState(client);
 	}
 }
-
-class HashedSortLocalSinkState;
 
 //===--------------------------------------------------------------------===//
 // HashedSortGlobalSinkState
@@ -387,12 +383,13 @@ void HashedSortLocalSinkState::Hash(DataChunk &input_chunk, Vector &hash_vector)
 	// OVER(PARTITION BY...) (hash grouping)
 	group_chunk.Reset();
 	hash_exec.Execute(input_chunk, group_chunk);
+
+	// Adaptive Partition Pruning: Hash and update HyperLogLog.
 	if (WindowOperatorConfig::get().shrink_partitions_adaptive) {
 		if (WindowOperatorConfig::get().use_adaptivity_context) {
 			VectorOperations::HashAndCount(group_chunk.data[0], hash_vector, count, unique_partition_values);
 			local_partition_count = unique_partition_values.Count();
 			hashed_tuples += input_chunk.size();
-			// std::cout << std::to_string(local_partition_count) + "\n";
 		} else {
 			auto current_unique_values = HyperLogLog{};
 			VectorOperations::HashAndCount(group_chunk.data[0], hash_vector, count, current_unique_values);
@@ -469,6 +466,7 @@ SinkResultType HashedSort::Sink(ExecutionContext &context, DataChunk &input_chun
 	auto &local_grouping = lstate.local_grouping;
 	auto &grouping_append = lstate.grouping_append;
 
+	// Adaptive Partition Pruning: Decide whether to prune or not.
 	auto adaptivity_skip = true;
 	const auto& config = WindowOperatorConfig::get();
 	if (config.shrink_partitions_adaptive) {
@@ -500,6 +498,7 @@ SinkResultType HashedSort::Sink(ExecutionContext &context, DataChunk &input_chun
 			selection.set_index(i, i);
 		}
 	} else {
+		// Partition Pruning: Iterate over tuples and compare ORDER BY value with heaps.
 		gstate.UpdateLocalPartition(local_grouping, grouping_append);
 		const auto sort_column = sort_ids[partitions.size()];
 		const auto value_count = static_cast<uint64_t>(config.predicate_value);

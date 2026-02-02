@@ -25,9 +25,7 @@ public:
 	vector<column_t> arg_order_idx;
 };
 
-struct NoneComparator {};
-
-template <typename Comparator = NoneComparator, bool early_out = false>
+template <typename Comparator = std::false_type, bool early_out = false>
 class WindowRankExecutor : public WindowPeerExecutor {
 public:
 	WindowRankExecutor(BoundWindowExpression &wexpr, WindowSharedExpressions &shared);
@@ -36,7 +34,7 @@ protected:
 	void EvaluateInternal(ExecutionContext &context, DataChunk &eval_chunk, Vector &result, idx_t count, idx_t row_idx,
 	                      OperatorSinkInput &sink) const override;
 };
-extern template class WindowRankExecutor<NoneComparator, false>;
+extern template class WindowRankExecutor<std::false_type, false>;
 extern template class WindowRankExecutor<std::less_equal<int64_t>, false>;
 extern template class WindowRankExecutor<std::less_equal<int64_t>, true>;
 
