@@ -6,8 +6,6 @@
 #include "duckdb/parallel/thread_context.hpp"
 #include "duckdb/planner/expression/bound_window_expression.hpp"
 
-#include <iostream>
-
 namespace duckdb {
 
 PhysicalStreamingWindow::PhysicalStreamingWindow(PhysicalPlan &physical_plan, vector<LogicalType> types,

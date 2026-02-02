@@ -106,11 +106,11 @@ void TemplatedLoopHash(Vector &input, Vector &result, const SelectionVector *rse
 		input.ToUnifiedFormat(count, idata);
 
 		if (idata.sel->IsSet()) {
-			return TightLoopHash<HAS_RSEL, true, T, INPUT_IS_ALREADY_HASH>(UnifiedVectorFormat::GetData<T>(idata),
+			TightLoopHash<HAS_RSEL, true, T, INPUT_IS_ALREADY_HASH>(UnifiedVectorFormat::GetData<T>(idata),
 			                                                        FlatVector::GetData<hash_t>(result), rsel, count,
 			                                                        idata.sel, idata.validity);
 		} else {
-			return TightLoopHash<HAS_RSEL, false, T, INPUT_IS_ALREADY_HASH>(UnifiedVectorFormat::GetData<T>(idata),
+			TightLoopHash<HAS_RSEL, false, T, INPUT_IS_ALREADY_HASH>(UnifiedVectorFormat::GetData<T>(idata),
 			                                                         FlatVector::GetData<hash_t>(result), rsel, count,
 			                                                         idata.sel, idata.validity);
 		}
@@ -133,11 +133,11 @@ void TemplatedLoopHash(Vector &input, Vector &result, const SelectionVector *rse
 		input.ToUnifiedFormat(count, idata);
 
 		if (idata.sel->IsSet()) {
-			return TightLoopHash<HAS_RSEL, true, T, INPUT_IS_ALREADY_HASH>(UnifiedVectorFormat::GetData<T>(idata),
+			TightLoopHash<HAS_RSEL, true, T, INPUT_IS_ALREADY_HASH>(UnifiedVectorFormat::GetData<T>(idata),
 			                                                        FlatVector::GetData<hash_t>(result), rsel, count,
 			                                                        idata.sel, idata.validity, unique_values);
 		} else {
-			return TightLoopHash<HAS_RSEL, false, T, INPUT_IS_ALREADY_HASH>(UnifiedVectorFormat::GetData<T>(idata),
+			TightLoopHash<HAS_RSEL, false, T, INPUT_IS_ALREADY_HASH>(UnifiedVectorFormat::GetData<T>(idata),
 			                                                         FlatVector::GetData<hash_t>(result), rsel, count,
 			                                                         idata.sel, idata.validity, unique_values);
 		}
@@ -341,28 +341,28 @@ void HashTypeSwitch(Vector &input, Vector &result, const SelectionVector *rsel, 
 	switch (input.GetType().InternalType()) {
 	case PhysicalType::BOOL:
 	case PhysicalType::INT8:
-		TemplatedLoopHash<HAS_RSEL, int8_t, false>(input, result, rsel, count);
+		TemplatedLoopHash<HAS_RSEL, int8_t>(input, result, rsel, count);
 		break;
 	case PhysicalType::INT16:
-		TemplatedLoopHash<HAS_RSEL, int16_t, false>(input, result, rsel, count);
+		TemplatedLoopHash<HAS_RSEL, int16_t>(input, result, rsel, count);
 		break;
 	case PhysicalType::INT32:
-		TemplatedLoopHash<HAS_RSEL, int32_t, false>(input, result, rsel, count);
+		TemplatedLoopHash<HAS_RSEL, int32_t>(input, result, rsel, count);
 		break;
 	case PhysicalType::INT64:
-		TemplatedLoopHash<HAS_RSEL, int64_t, false>(input, result, rsel, count);
+		TemplatedLoopHash<HAS_RSEL, int64_t>(input, result, rsel, count);
 		break;
 	case PhysicalType::UINT8:
-		TemplatedLoopHash<HAS_RSEL, uint8_t, false>(input, result, rsel, count);
+		TemplatedLoopHash<HAS_RSEL, uint8_t>(input, result, rsel, count);
 		break;
 	case PhysicalType::UINT16:
-		TemplatedLoopHash<HAS_RSEL, uint16_t, false>(input, result, rsel, count);
+		TemplatedLoopHash<HAS_RSEL, uint16_t>(input, result, rsel, count);
 		break;
 	case PhysicalType::UINT32:
-		TemplatedLoopHash<HAS_RSEL, uint32_t, false>(input, result, rsel, count);
+		TemplatedLoopHash<HAS_RSEL, uint32_t>(input, result, rsel, count);
 		break;
 	case PhysicalType::UINT64:
-		TemplatedLoopHash<HAS_RSEL, uint64_t, false>(input, result, rsel, count);
+		TemplatedLoopHash<HAS_RSEL, uint64_t>(input, result, rsel, count);
 		break;
 	case PhysicalType::INT128:
 		TemplatedLoopHash<HAS_RSEL, hugeint_t>(input, result, rsel, count);
@@ -402,28 +402,28 @@ void HashTypeSwitch(Vector &input, Vector &result, const SelectionVector *rsel, 
 	switch (input.GetType().InternalType()) {
 	case PhysicalType::BOOL:
 	case PhysicalType::INT8:
-		TemplatedLoopHash<HAS_RSEL, int8_t, false>(input, result, rsel, count, unique_values);
+		TemplatedLoopHash<HAS_RSEL, int8_t>(input, result, rsel, count, unique_values);
 		break;
 	case PhysicalType::INT16:
-		TemplatedLoopHash<HAS_RSEL, int16_t, false>(input, result, rsel, count, unique_values);
+		TemplatedLoopHash<HAS_RSEL, int16_t>(input, result, rsel, count, unique_values);
 		break;
 	case PhysicalType::INT32:
-		TemplatedLoopHash<HAS_RSEL, int32_t, false>(input, result, rsel, count, unique_values);
+		TemplatedLoopHash<HAS_RSEL, int32_t>(input, result, rsel, count, unique_values);
 		break;
 	case PhysicalType::INT64:
-		TemplatedLoopHash<HAS_RSEL, int64_t, false>(input, result, rsel, count, unique_values);
+		TemplatedLoopHash<HAS_RSEL, int64_t>(input, result, rsel, count, unique_values);
 		break;
 	case PhysicalType::UINT8:
-		TemplatedLoopHash<HAS_RSEL, uint8_t, false>(input, result, rsel, count, unique_values);
+		TemplatedLoopHash<HAS_RSEL, uint8_t>(input, result, rsel, count, unique_values);
 		break;
 	case PhysicalType::UINT16:
-		TemplatedLoopHash<HAS_RSEL, uint16_t, false>(input, result, rsel, count, unique_values);
+		TemplatedLoopHash<HAS_RSEL, uint16_t>(input, result, rsel, count, unique_values);
 		break;
 	case PhysicalType::UINT32:
-		TemplatedLoopHash<HAS_RSEL, uint32_t, false>(input, result, rsel, count, unique_values);
+		TemplatedLoopHash<HAS_RSEL, uint32_t>(input, result, rsel, count, unique_values);
 		break;
 	case PhysicalType::UINT64:
-		TemplatedLoopHash<HAS_RSEL, uint64_t, false>(input, result, rsel, count, unique_values);
+		TemplatedLoopHash<HAS_RSEL, uint64_t>(input, result, rsel, count, unique_values);
 		break;
 	case PhysicalType::INT128:
 		TemplatedLoopHash<HAS_RSEL, hugeint_t>(input, result, rsel, count, unique_values);

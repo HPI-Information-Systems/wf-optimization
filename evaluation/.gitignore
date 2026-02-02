@@ -1,5 +1,7 @@
 data
 *.csv
 
-build/
+build
 build-debug
+experiments
+figures

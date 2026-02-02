@@ -5,7 +5,7 @@
 all: duckdb
 
 clean:
-	rm -rf build
+	rm -rf build main
 
 duckdb:
 	cd ../.. && make

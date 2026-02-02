@@ -25,7 +25,6 @@ def main(cardinality, partitions, directory, skewed, randomize, skewness):
         assert cardinality > partitions, "Cardinality must be larger than number of partitions"
         rows_per_partition = [round(cardinality / partitions) for _ in range(partitions)]
     else:
-
         rand = np.random.default_rng(1717)
         distribution = rand.zipf(skewness, size=cardinality)
         rows_per_partition = defaultdict(int)

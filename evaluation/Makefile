@@ -9,7 +9,7 @@ clean:
 	rm -rf build
 
 duckdb:
-	cd ../ && DISABLE_SANITIZER=1 CXX_STANDARD=17 CMAKE_LLVM_PATH=${LLVM_PATH} DISABLE_VPTR_SANITIZER=1 GEN=ninja make release
+	cd ../ && DISABLE_SANITIZER=1 CMAKE_LLVM_PATH=${LLVM_PATH} DISABLE_VPTR_SANITIZER=1 GEN=ninja make release
 
 microbench: build
 	build/microbench
