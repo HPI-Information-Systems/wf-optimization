@@ -26,10 +26,10 @@ git checkout pipeline-times
 cd ../../build/release && cmake --build . --config Release ; cd -
 cd ../build && cmake --build . --config Release ; cd -
 
-../build/playground 1000000 100 -l Baseline > pipeline_durations_100_partitions_baseline.txt
-../build/playground 1000000 100 -l Combined > pipeline_durations_100_partitions_combined.txt
-../build/playground 1000000 10000 -l Baseline > pipeline_durations_10000_partitions_baseline.txt
-../build/playground 1000000 10000 -l Combined > pipeline_durations_10000_partitions_combined.txt
+../build/playground 1000000 100 -w -l Baseline > pipeline_durations_100_partitions_baseline.txt
+../build/playground 1000000 100 -w -l Combined > pipeline_durations_100_partitions_combined.txt
+../build/playground 1000000 10000 -w -l Baseline > pipeline_durations_10000_partitions_baseline.txt
+../build/playground 1000000 10000 -w -l Combined > pipeline_durations_10000_partitions_combined.txt
 
 git checkout main
 cd ../../build/release && cmake --build . --config Release ; cd -
