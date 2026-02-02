@@ -15,7 +15,7 @@
 //
 #include <numeric>
 #include <functional>
-#include <iostream>
+#include <type_traits>
 #include <mutex>
 
 namespace duckdb {
@@ -182,7 +182,6 @@ public:
 
 	unsafe_vector<unsafe_vector<idx_t>> partition_begins;
 	unsafe_vector<idx_t> block_sums;
-	// unsafe_vector<std::mutex> block_mutexes;
 	std::mutex block_mutex;
 };
 
@@ -262,13 +261,14 @@ static unique_ptr<WindowExecutor> WindowExecutorFactory(BoundWindowExpression &w
 	case ExpressionType::WINDOW_RANK_DENSE:
 		return make_uniq<WindowDenseRankExecutor>(wexpr, shared);
 	case ExpressionType::WINDOW_RANK:
+		// Co-Evaluation: Create executor that evaluates predicate.
 		if (early_out) {
 			return make_uniq<WindowRankExecutor<std::less_equal<int64_t>, true>>(wexpr, shared);
 		}
 		if (use_filter) {
 			return make_uniq<WindowRankExecutor<std::less_equal<int64_t>, false>>(wexpr, shared);
 		}
-		return make_uniq<WindowRankExecutor<NoneComparator, false>>(wexpr, shared);
+		return make_uniq<WindowRankExecutor<std::false_type, false>>(wexpr, shared);
 	case ExpressionType::WINDOW_PERCENT_RANK:
 		return make_uniq<WindowPercentRankExecutor>(wexpr, shared);
 	case ExpressionType::WINDOW_CUME_DIST:
@@ -439,19 +439,14 @@ WindowGlobalSourceState::WindowGlobalSourceState(ClientContext &client, WindowGl
 	auto &hash_groups = global_partition.GetHashGroups(*hashed_source);
 	window_hash_groups.resize(hash_groups.size());
 
-	// std::cout << "init WindowGlobalSourceState: " + std::to_string(hash_groups.size()) + " hash groups\n";
-
 	use_filter = WindowOperatorConfig::get().do_filter;
 	early_out = WindowOperatorConfig::get().do_early_out;
 	shrink_runs = WindowOperatorConfig::get().shrink_runs;
-	// auto group_count = 0;
 	for (idx_t group_idx = 0; group_idx < hash_groups.size(); ++group_idx) {
 		auto rows = std::move(hash_groups[group_idx]);
 		if (!rows) {
 			continue;
 		}
-		// ++group_count;
-		// std::cout << "Group " + std::to_string(group_count) + " " + std::to_string(rows->Count()) + " rows\n";
 
 		auto window_hash_group = make_uniq<WindowHashGroup>(gsink, rows, group_idx);
 		const auto block_count = window_hash_group->rows->ChunkCount();
@@ -490,14 +485,12 @@ void WindowGlobalSourceState::CreateTaskList() {
 	// STANDARD_VECTOR_SIZE >> ValidityMask::BITS_PER_VALUE, but if STANDARD_VECTOR_SIZE is say 2,
 	// we need to align the chunk count to the mask width.
 	const auto aligned_scale = MaxValue<idx_t>(ValidityMask::BITS_PER_VALUE / STANDARD_VECTOR_SIZE, 1);
-	// std::cout << "aligned_scale " + std::to_string(aligned_scale) + "\n";
 	const auto aligned_count = (max_block.first + aligned_scale - 1) / aligned_scale;
 	const auto per_thread = aligned_scale * ((aligned_count + threads - 1) / threads);
 	if (!per_thread) {
 		throw InternalException("No blocks per thread! %ld threads, %ld groups, %ld blocks, %ld hash group", threads,
 		                        partition_blocks.size(), max_block.first, max_block.second);
 	}
-	// std::cout << "Per thread: " + std::to_string(per_thread) + "\n";
 
 	for (const auto &b : partition_blocks) {
 		total_tasks += window_hash_groups[b.second]->InitTasks(per_thread);
@@ -519,9 +512,13 @@ WindowHashGroup::WindowHashGroup(WindowGlobalSinkState &gsink, HashGroupPtr &sor
 	if (rows) {
 		count = rows->Count();
 		blocks = rows->ChunkCount();
+
+		// Co-Evaluation with Stop: Initialize WF partition start cache.
 		if (gsink.early_out) {
 			partition_begins.resize(blocks);
 		}
+
+		// Merge Pruning: Initialize handling of chunks smallr than default size.
 		if (gsink.shrink_runs) {
 			const auto block_counts = rows->ChunkCounts();
 			auto block_sum = idx_t{0};
@@ -530,11 +527,6 @@ WindowHashGroup::WindowHashGroup(WindowGlobalSinkState &gsink, HashGroupPtr &sor
 				block_sum += block_counts[block_id];
 				block_sums[block_id] = block_sum;
 			}
-			// block_mutexes = std::vector<std::mutex>((((count + ValidityMask::BITS_PER_VALUE - 1) / ValidityMask::BITS_PER_VALUE) + 1 ) / 2);
-			// auto msg = std::stringstream{};
-			// msg << "group " << hash_bin << " " << count << " tuples " << block_mutexes.size() << " mutexes\n";
-			// std::cout << msg.str();
-
 		}
 	}
 
@@ -645,7 +637,8 @@ void WindowHashGroup::ComputeMasks(const idx_t block_begin, const idx_t block_en
 			                   const idx_t curr_index = row_idx + distinct.get_index(i);
 			                   partition_mask.SetValidUnsafe(curr_index);
 			                   if constexpr (SET_BEGINS) {
-			                   	 partition_begins[curr_block].push_back(curr_index);
+			                     // Co-Evaluation with Stop: Fill partition start cache.
+			                     partition_begins[curr_block].push_back(curr_index);
 			                   }
 			                   for (auto &order_mask : order_masks) {
 				                   order_mask.second.SetValidUnsafe(curr_index);
@@ -696,21 +689,14 @@ void WindowHashGroup::ComputeMasksForSmallRuns(const idx_t block_begin, const id
 	const idx_t begin_count = block_begin == 0 ? 0 : block_sums[block_begin - 1];
 	const idx_t end_count = block_sums[block_end - 1];
 
+	// Merge Pruning: Handle runs smaller than default size / that are not multiple of validity_t:
+	//   - Only initialize within correct bounds.
+	//   - Lock to ensure correct concurrent results for overlapping chunks in same validity_t.
 	idx_t begin_entry, begin_idx;
 	partition_mask.GetEntryIndex(begin_count, begin_entry, begin_idx);
 	idx_t end_entry, end_idx;
 	partition_mask.GetEntryIndex(end_count, end_entry, end_idx);
 
-	// const auto begin_mutex = begin_entry % 2;
-	// const auto end_mutex = end_entry % 2;
-
-	// auto begin_lock = std::unique_lock{block_mutexes[begin_mutex], std::defer_lock};
-	// auto end_lock = std::unique_lock{block_mutexes[end_mutex], std::defer_lock};
-	// if (begin_mutex == end_mutex) {
-	// 	begin_lock.lock();
-	// } else {
-	// 	std::lock(begin_lock, end_lock);
-	// }
 	const auto lock = std::lock_guard{block_mutex};
 
 	partition_mask.SetEntryRangeInvalid(count, begin_entry, begin_idx, end_entry, end_idx);
@@ -755,6 +741,7 @@ void WindowHashGroup::ComputeMasksForSmallRuns(const idx_t block_begin, const id
 			                   const idx_t curr_index = row_idx + distinct.get_index(i);
 			                   partition_mask.SetValidUnsafe(curr_index);
 			                   if constexpr (SET_BEGINS) {
+			                   	 // Co-Evaluation with Stop: Fill partition start cache.
 			                   	 partition_begins[curr_block].push_back(curr_index);
 			                   }
 			                   for (auto &order_mask : order_masks) {
@@ -794,10 +781,6 @@ void WindowHashGroup::ComputeMasksForSmallRuns(const idx_t block_begin, const id
 			                   }
 		                   }
 	                   });
-	// begin_lock.unlock();
-	// if (begin_entry != end_entry) {
-	// 	end_lock.unlock();
-	// }
 }
 
 // Per-thread scan state
@@ -880,6 +863,7 @@ void WindowLocalSourceState::Mask(ExecutionContext &context, InterruptState &int
 
 	resolve_bool(gsource.early_out, [&](const auto set_begins){
 		constexpr auto SET_BEGINS = decltype(set_begins)::value;
+		// Merge Pruning: Handle runs smaller than default size / that are not multiple of validity_t.
 		if (gsource.shrink_runs) {
 			window_hash_group->ComputeMasksForSmallRuns<SET_BEGINS>(task->begin_idx, task->end_idx);
 		} else {
@@ -890,7 +874,6 @@ void WindowLocalSourceState::Mask(ExecutionContext &context, InterruptState &int
 	//	Mark this range as done
 	window_hash_group->masked += (task->end_idx - task->begin_idx);
 	task->begin_idx = task->end_idx;
-	// std::cout << "Masked group " + std::to_string(task->group_idx) + " begin " + std::to_string(task->begin_idx) + " end " + std::to_string(task->end_idx) + "\n";
 }
 
 WindowHashGroup::ExecutorGlobalStates &WindowHashGroup::GetGlobalStates(ClientContext &client) {
@@ -1152,8 +1135,9 @@ void WindowLocalSourceState::ExecuteTask(ExecutionContext &context, DataChunk &r
 
 void WindowLocalSourceState::GetData(ExecutionContext &context, DataChunk &result, InterruptState &interrupt) {
 	D_ASSERT(window_hash_group->GetStage() == WindowGroupStage::GETDATA);
-	D_ASSERT(!gsource.early_out || std::is_sorted(window_hash_group->partition_begins[task->begin_idx].cbegin(), window_hash_group->partition_begins[task->begin_idx].cend()));
 
+	// Co-Evaluation + Stop: Ensure that WF partition start cache is filled.
+	D_ASSERT(!gsource.early_out || std::is_sorted(window_hash_group->partition_begins[task->begin_idx].cbegin(), window_hash_group->partition_begins[task->begin_idx].cend()));
 
 	window_hash_group->UpdateScanner(scanner, task->begin_idx);
 	batch_index = window_hash_group->batch_base + task->begin_idx;
@@ -1200,6 +1184,7 @@ void WindowLocalSourceState::GetData(ExecutionContext &context, DataChunk &resul
 		result.data[out_idx++].Reference(output_chunk.data[col_idx]);
 	}
 
+	// Co-Evaluation + Stop: Apply predicate result to chunk.
 	if (gsource.use_filter && sel != nullptr) {
 		result.Slice(*sel, row_count);
 	}

@@ -10,7 +10,6 @@
 
 #include "duckdb/common/types/row/tuple_data_states.hpp"
 #include "duckdb/execution/expression_executor.hpp"
-#include "duckdb/common/sorting/sort_key.hpp"
 
 #include <type_traits>
 
@@ -31,7 +30,7 @@ public:
 	void Scan(const SortedRun &sorted_run, const Vector &sort_key_pointers, const idx_t &count, DataChunk &chunk);
 
 private:
-	template <SortKeyType sort_key_type, bool HAS_POS_LIST>
+	template <SortKeyType sort_key_type>
 	void TemplatedScan(const SortedRun &sorted_run, const Vector &sort_key_pointers, const idx_t &count,
 	                   DataChunk &chunk);
 
@@ -42,28 +41,6 @@ private:
 	DataChunk decoded_key;
 	TupleDataScanState payload_state;
 };
-
-// Constants for column value extraction from SortKey
-constexpr auto ORDER_BY_MASK = uint64_t{0b00000000'00000000'00000000'11111111'11111111'11111111'11111111'11111111};
-constexpr auto VALUE_MASK = uint64_t{0b00000000'00000000'00000000'00000000'01111111'11111111'11111111'11111111};
-constexpr auto PARTITION_BITS = 24;
-constexpr auto FIRST_ORDER_BITS = 16;
-constexpr auto SECOND_ORDER_BITS = 48;
-
-inline uint64_t extract_partition(const SortKey<SortKeyType::NO_PAYLOAD_FIXED_16>& key) {
-	return key.part0 >> PARTITION_BITS;
-}
-
-inline uint64_t extract_order_by(const SortKey<SortKeyType::NO_PAYLOAD_FIXED_16>& key) {
-	D_ASSERT(!(key.part1 << FIRST_ORDER_BITS));
-	return (ORDER_BY_MASK & (key.part0 << FIRST_ORDER_BITS)) | (key.part1 >> SECOND_ORDER_BITS);
-}
-
-inline std::string print_bits(const uint64_t value) {
-	auto msg = std::stringstream{};
-	msg << std::bitset<64>(value);
-	return msg.str();
-}
 
 class SortedRun {
 public:
@@ -102,8 +79,6 @@ public:
 
 	//! Whether this run has been finalized
 	bool finalized;
-
-	std::optional<unsafe_vector<idx_t>> pos_list;
 };
 
 } // namespace duckdb

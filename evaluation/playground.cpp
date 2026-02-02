@@ -79,10 +79,8 @@ int main(int argc, char* argv[]) {
     auto* config = new DBConfig();
     config->options.maximum_threads = core_count;
     DuckDB db(nullptr, config);
-    // DuckDB db(nullptr);
     Connection con(db);
     std::cout << "Using " << db.NumberOfThreads() << " core(s)\n";
-    // con.SetAutoCommit(true);
 
 
     const auto table_file_name = [&](auto p, auto r){
@@ -103,9 +101,6 @@ int main(int argc, char* argv[]) {
     const auto predicate_value = uint64_t{3};
 
     con.BeginTransaction();
-    // con.Query("create table store_sales ( ss_sold_date_sk integer , ss_sold_time_sk integer , ss_item_sk integer not null, ss_customer_sk integer , ss_cdemo_sk integer , ss_hdemo_sk integer , ss_addr_sk integer , ss_store_sk integer , ss_promo_sk integer , ss_ticket_number integer not null, ss_quantity integer , ss_wholesale_cost decimal(7,2) , ss_list_price decimal(7,2) , ss_sales_price decimal(7,2) , ss_ext_discount_amt decimal(7,2) , ss_ext_sales_price decimal(7,2) , ss_ext_wholesale_cost decimal(7,2) , ss_ext_list_price decimal(7,2) , ss_ext_tax decimal(7,2) , ss_coupon_amt decimal(7,2) , ss_net_paid decimal(7,2) , ss_net_paid_inc_tax decimal(7,2) , ss_net_profit decimal(7,2) );");
-
-    // con.Query("COPY store_sales FROM 'store_sales_s1_ordered_100.csv' WITH (FORMAT CSV, DELIMITER ',', NULL '', QUOTE '\"');"); //->Print();
     con.Query("create table eval (a int, b int, c int);");
     con.Query("COPY eval FROM '" + filename + "' WITH (FORMAT CSV, DELIMITER ',', NULL '', QUOTE '\"');");
     con.Commit();
@@ -146,31 +141,6 @@ int main(int argc, char* argv[]) {
         const auto level_str = optimization_level_to_str(level);
 
         std::cout << "\n==============================\n" << level_str << "\n==============================\n";
-
-        // con.Query("select ss_store_sk, count(*), count(distinct ss_sold_date_sk) from store_sales group by ss_store_sk")->Print();
-
-        // std::cout << "== Row count ==\n";
-
-        // con.Query("SELECT count(*) from eval")->Print();
-        // con.Query("SELECT min(ss_item_sk), max(ss_item_sk) from store_sales")->Print();
-        // con.Query("SELECT count(distinct ss_sold_date_sk) from store_sales")->Print();
-        // con.Query("SELECT count(distinct ss_item_sk) from store_sales")->Print();
-
-        // string query = use_filter ?
-        //   "SELECT ss_item_sk, ss_sold_date_sk, rank() OVER (PARTITION BY ss_store_sk ORDER BY ss_sold_date_sk) rnk FROM store_sales where ss_item_sk < 4" :
-        //  "SELECT * FROM (SELECT ss_item_sk, ss_sold_date_sk, rank() OVER (PARTITION BY ss_store_sk ORDER BY ss_sold_date_sk) rnk FROM store_sales where ss_item_sk < 4) t WHERE rnk < 20";
-
-        //con.Query("select * from store_sales order by ss_store_sk, ss_sold_date_sk;")->Print();
-
-        // con.Query("select min(ss_item_sk), max(ss_item_sk), count(distinct ss_item_sk) from store_sales group by ss_store_sk;")->Print();
-        // con.Query("select min(ss_item_sk), max(ss_item_sk), count(distinct ss_item_sk) from store_sales where ss_item_sk < 10000  group by ss_store_sk;")->Print();
-
-        // std::exit(0);
-
-        // string query = WindowOperatorConfig::get().do_filter ?
-        //   "SELECT * from (select ss_store_sk, ss_sold_date_sk, rank() OVER (PARTITION BY ss_store_sk ORDER BY ss_sold_date_sk) rnk FROM store_sales where ss_item_sk < 10000) t" :
-        //  "SELECT * FROM (SELECT ss_store_sk, ss_sold_date_sk, rank() OVER (PARTITION BY ss_store_sk ORDER BY ss_sold_date_sk) rnk FROM store_sales where ss_item_sk < 10000) t";
-
         const auto predicate_value = int64_t{3};
         const auto is_combined = level == WindowOperatorConfig::OptimizationLevel::Combined;
         WindowOperatorConfig::get().predicate_value = predicate_value;
@@ -187,9 +157,6 @@ int main(int argc, char* argv[]) {
          "SELECT * from (select a, b, rank() OVER (PARTITION BY a ORDER BY b) rnk FROM eval) t" :
           "SELECT * from (select a, b, rank() OVER (PARTITION BY a ORDER BY b) rnk FROM eval) t WHERE rnk <= " + std::to_string(predicate_value);
 
-        // std::cout << "== Run ==\n";
-
-        // auto result_count = con.Query(query)->RowCount();
         auto result_count = 0;
         if (warmup) {
             con.Query(query);
@@ -201,7 +168,6 @@ int main(int argc, char* argv[]) {
             reset_metrics();
             result = con.Query(query);
             result_count += result->RowCount();
-            // result->Print();
 
             auto& conf = WindowOperatorConfig::get();
             std::cout << "PARTITION\n";
@@ -254,25 +220,6 @@ int main(int argc, char* argv[]) {
         const auto is_smaller = result_count < expected;
         const auto diff = is_smaller ? expected - result_count : result_count - expected;
         std::cout << "\t" << level_str << "\t" << result_count  << "\t" << (is_smaller ? "-" : "+") << diff << "\t" <<  std::chrono::duration<double, std::milli>{duration}.count() << " ms\n";
-
-
-        // std::cout << "== Print ==\n";
-        // con.Query(query + " ORDER BY a, rnk")->Print();
-        if (verbose) {
-            result->Print();
-        }
-        // con.Query("select min(cnt), max(cnt), avg(cnt), min(o_cnt), max(o_cnt), avg(o_cnt) from (SELECT count(*) cnt, count(distinct ss_sold_date_sk) o_cnt from store_sales group BY ss_item_sk) t")->Print();
-        //con.Query("SELECT * FROM (SELECT ss_item_sk, ss_sold_date_sk, rank() OVER (PARTITION BY ss_item_sk ORDER BY ss_sold_date_sk) rnk FROM store_sales) t WHERE rnk < 20")->Print();
-
-        // con.Query("select rnk, count(rnk) cnt from (SELECT ss_store_sk, ss_sold_date_sk, rank() OVER (PARTITION BY ss_store_sk ORDER BY ss_sold_date_sk) rnk FROM store_sales) t group by rnk order by cnt desc limit 20")->Print();
-
-        // con.Query("select ss_store_sk, max(rnk) from (SELECT ss_store_sk, ss_sold_date_sk, rank() OVER (PARTITION BY ss_store_sk ORDER BY ss_sold_date_sk) rnk FROM store_sales) t group by ss_store_sk order by ss_store_sk")->Print();
-
-        // con.Query("select ss_store_sk, count(*) cnt from store_sales group by ss_store_sk order by ss_store_sk")->Print();
-
-        //con.Query("select count(distinct rnk) from (SELECT ss_item_sk, ss_sold_date_sk, rank() OVER (PARTITION BY ss_store_sk ORDER BY ss_sold_date_sk) rnk FROM store_sales) t")->Print();
-
-        // con.Query("EXPLAIN ANALYZE " + query)->Print();
     }
     std::cout << "\n";
     con.BeginTransaction();

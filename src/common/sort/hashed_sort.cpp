@@ -7,8 +7,6 @@
 #include "duckdb/execution/operator/aggregate/window_operator_config.hpp"
 #include "duckdb/common/types/hyperloglog.hpp"
 
-#include <iostream>
-
 namespace duckdb {
 
 //===--------------------------------------------------------------------===//
@@ -43,8 +41,6 @@ HashedSortGroup::HashedSortGroup(ClientContext &client, optional_ptr<Sort> sort,
 	}
 }
 
-class HashedSortLocalSinkState;
-
 //===--------------------------------------------------------------------===//
 // HashedSortGlobalSinkState
 //===--------------------------------------------------------------------===//
@@ -64,7 +60,6 @@ public:
 	unique_ptr<RadixPartitionedTupleData> CreatePartition(idx_t new_bits) const;
 	void SyncPartitioning(const HashedSortGlobalSinkState &other);
 	void UpdateLocalPartition(GroupingPartition &local_partition, GroupingAppend &partition_append);
-	void UpdateLocalPartition(GroupingPartition &local_partition, GroupingAppend &partition_append, HashedSortLocalSinkState& lstate);
 	void CombineLocalPartition(GroupingPartition &local_partition, GroupingAppend &local_append);
 	ProgressData GetSinkProgress(ClientContext &context, const ProgressData source_progress) const;
 
@@ -402,13 +397,13 @@ void HashedSortLocalSinkState::Hash(DataChunk &input_chunk, Vector &hash_vector)
 	// OVER(PARTITION BY...) (hash grouping)
 	group_chunk.Reset();
 	hash_exec.Execute(input_chunk, group_chunk);
-	VectorOperations::Hash(group_chunk.data[0], hash_vector, count);
+
+	// Adaptive Partition Pruning: Hash and update HyperLogLog.
 	if (WindowOperatorConfig::get().shrink_partitions_adaptive) {
 		if (WindowOperatorConfig::get().use_adaptivity_context) {
 			VectorOperations::HashAndCount(group_chunk.data[0], hash_vector, count, unique_partition_values);
 			local_partition_count = unique_partition_values.Count();
 			hashed_tuples += input_chunk.size();
-			// std::cout << std::to_string(local_partition_count) + "\n";
 		} else {
 			auto current_unique_values = HyperLogLog{};
 			VectorOperations::HashAndCount(group_chunk.data[0], hash_vector, count, current_unique_values);
@@ -419,67 +414,6 @@ void HashedSortLocalSinkState::Hash(DataChunk &input_chunk, Vector &hash_vector)
 	}
 	for (idx_t prt_idx = 1; prt_idx < group_chunk.ColumnCount(); ++prt_idx) {
 		VectorOperations::CombineHash(hash_vector, group_chunk.data[prt_idx], count);
-	}
-}
-
-void HashedSortGlobalSinkState::UpdateLocalPartition(GroupingPartition &local_partition,
-                                                     GroupingAppend &partition_append,
-                                                     HashedSortLocalSinkState& lstate) {
-	// Make sure grouping_data doesn't change under us.
-	lock_guard<mutex> guard(lock);
-
-	if (!local_partition) {
-		local_partition = CreatePartition(grouping_data->GetRadixBits());
-		partition_append = make_uniq<PartitionedTupleDataAppendState>();
-		local_partition->InitializeAppendState(*partition_append);
-		return;
-	}
-
-	// 	Grow the groups if they are too big
-	Rehash(count);
-
-	//	Sync local partition to have the same bit count
-	SyncLocalPartition(local_partition, partition_append);
-}
-
-
-//! Templated radix partitioning constants, can be templated to the number of radix bits
-template <idx_t radix_bits>
-struct RadixPartitioningConstants {
-public:
-	//! Bitmask of the upper bits starting at the 5th byte
-	static constexpr idx_t NUM_PARTITIONS = RadixPartitioning::NumberOfPartitions(radix_bits);
-	static constexpr idx_t SHIFT = RadixPartitioning::Shift(radix_bits);
-	static constexpr hash_t MASK = RadixPartitioning::Mask(radix_bits);
-
-public:
-	//! Apply bitmask and right shift to get a number between 0 and NUM_PARTITIONS
-	static hash_t ApplyMask(const hash_t hash) {
-		D_ASSERT((hash & MASK) >> SHIFT < NUM_PARTITIONS);
-		return (hash & MASK) >> SHIFT;
-	}
-};
-
-template <typename Functor>
-void resolve_radix_bits(idx_t radix_bits, const Functor& fn) {
-	switch (radix_bits) {
-		case 4:
-			fn(RadixPartitioningConstants<4>{});
-			break;
-		case 5:
-			fn(RadixPartitioningConstants<5>{});
-			break;
-		case 6:
-			fn(RadixPartitioningConstants<6>{});
-			break;
-		case 7:
-			fn(RadixPartitioningConstants<7>{});
-			break;
-		case 8:
-			fn(RadixPartitioningConstants<8>{});
-			break;
-		default:
-			throw std::runtime_error("Unexpected number of radix bits: " + std::to_string(radix_bits));
 	}
 }
 
@@ -550,6 +484,7 @@ SinkResultType HashedSort::Sink(ExecutionContext &context, DataChunk &input_chun
 	auto &local_grouping = lstate.local_grouping;
 	auto &grouping_append = lstate.grouping_append;
 
+	// Adaptive Partition Pruning: Decide whether to prune or not.
 	auto adaptivity_skip = true;
 	const auto& config = WindowOperatorConfig::get();
 	if (config.shrink_partitions_adaptive) {
@@ -582,6 +517,7 @@ SinkResultType HashedSort::Sink(ExecutionContext &context, DataChunk &input_chun
 			selection.set_index(i, i);
 		}
 	} else {
+		// Partition Pruning: Iterate over tuples and compare ORDER BY value with heaps.
 		gstate.UpdateLocalPartition(local_grouping, grouping_append);
 		const auto sort_column = sort_ids[partitions.size()];
 		const auto value_count = static_cast<uint64_t>(config.predicate_value);
