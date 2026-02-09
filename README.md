@@ -44,5 +44,5 @@ There are adaptations in multiple places:
 
 - Dependencies
   ```txt
-  ninja-build golang python3
+  cmake ninja-build golang python3
   ```

@@ -20,6 +20,7 @@
 #include <fstream>
 #include <cstdlib>
 #include <stdexcept>
+#include <optional>
 
 using namespace duckdb;
 

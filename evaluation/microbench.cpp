@@ -27,6 +27,7 @@
 #include <array>
 #include <tuple>
 #include <regex>
+#include <optional>
 
 using namespace duckdb;
 
