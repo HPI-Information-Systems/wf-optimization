@@ -14,11 +14,11 @@ There are adaptations in multiple places:
       DISABLE_SANITIZER=1 DISABLE_VPTR_SANITIZER=1 GEN=ninja make release
   cd evaluation
   mkdir -p build
-  cd build &&
-  cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=<your_c_compiler> \
+  cd build
+  cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=<your_cxx_compiler> \
       -DCMAKE_CXX_COMPILER=<your_c_compiler> -GNinja
   cmake --build .
-  cd ..
+  cd ../..
   ```
 
 - Data generation
@@ -43,6 +43,6 @@ There are adaptations in multiple places:
   The plots are located in `evaluation/figures`.
 
 - Dependencies
-  ```sh
-  ninja golang r-base
+  ```txt
+  ninja-build golang python3
   ```

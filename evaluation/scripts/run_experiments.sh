@@ -1,6 +1,5 @@
 #!/bin/bash
 
-export PATH="$PATH:$(pwd)/build/release"
 mkdir -p evaluation/experiments
 ln -sf $(pwd)/evaluation/data $(pwd)/evaluation/experiments/data
 cd evaluation/experiments
