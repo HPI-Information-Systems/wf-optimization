@@ -147,6 +147,7 @@ def main(data_dir, output_dir):
             "font.family": "serif",  # use serif/main font for text elements
             "text.usetex": True,  # use inline math for ticks
             "pgf.rcfonts": False,  # don't setup fonts from rc parameters
+            "pgf.texsystem" : "pdflatex",
             "pgf.preamble": r"""\usepackage{iftex}
   \ifxetex
     \usepackage[libertine]{newtxmath}

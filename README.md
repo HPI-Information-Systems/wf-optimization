@@ -15,8 +15,8 @@ There are adaptations in multiple places:
   cd evaluation
   mkdir -p build
   cd build
-  cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=<your_cxx_compiler> \
-      -DCMAKE_CXX_COMPILER=<your_c_compiler> -GNinja
+  cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=<your_c_compiler> \
+      -DCMAKE_CXX_COMPILER=<your_cxx_compiler> -GNinja
   cmake --build .
   cd ../..
   ```
@@ -44,5 +44,5 @@ There are adaptations in multiple places:
 
 - Dependencies
   ```txt
-  cmake ninja-build golang python3
+  cmake ninja-build golang python3 texlive texlive-fonts-extra
   ```

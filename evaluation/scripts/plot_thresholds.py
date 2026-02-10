@@ -80,20 +80,13 @@ def log_lineplot(data, skewed = False, speedup=False, marks=None, pal=None, orde
         markersize=7,
         dashes=False
     )
-    # sns.relplot(data, x=x, y=y, hue="Conf", palette=palette, hue_order=order, style_order=order)
     y_ticks = sorted(list(data.PARTITION_COUNT.unique())) if not skewed else sorted(list(data.Rows.unique()))
-    # ax.xaxis.set_major_locator(FixedLocator(ticks))
     ax.set_xscale("log")
     if skewed and not speedup:
         ax.set_yscale("log")
 
-    # if not skewed:
     ax.xaxis.set_major_locator(FixedLocator(y_ticks))
-    # ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _: format_number(x)))
-    # else:
     ax.yaxis.set_major_formatter(FuncFormatter(lambda x, _: format_number(x)))
-    # ax.xaxis.set_minor_locator(FixedLocator(minor_ticks))
-    # ax.yaxis.set_minor_locator(FixedLocator(minor_ticks))
     #plt.ylabel("Runtime [ms]", fontsize=8 * 2)
     label = r"\# Partitions" if not skewed else r"\# Rows"
     ax.set_xlabel(label, fontsize=7 * 2)
@@ -124,6 +117,7 @@ def main(input_dir, output_dir, skewed, speedup):
             "font.family": "serif",  # use serif/main font for text elements
             "text.usetex": True,  # use inline math for ticks
             "pgf.rcfonts": False,  # don't setup fonts from rc parameters
+            "pgf.texsystem" : "pdflatex",
             "pgf.preamble": r"""\usepackage{iftex}
   \ifxetex
     \usepackage[libertine]{newtxmath}
@@ -151,7 +145,7 @@ def main(input_dir, output_dir, skewed, speedup):
         raw_data = pd.read_csv(input_file)
         raw_data["Mode"] = "MT" if "mt.csv" in input_file else "ST"
         raw_data.rename(columns={'CONFIGURATION': 'Configuration'}, inplace=True)
-        raw_data["Ind"] = raw_data["Configuration"].str.contains("Adaptive") #f"{raw_data['Configuration']}_{raw_data['THRESHOLD']}"
+        raw_data["Ind"] = raw_data["Configuration"].str.contains("Adaptive")
 
         raw_data["Conf"] = np.where(raw_data["Configuration"].str.contains("Adaptive"), raw_data['Configuration'] + "_" +  raw_data['THRESHOLD'].astype(str), raw_data["Configuration"])
         data.append(raw_data)
@@ -211,8 +205,6 @@ def main(input_dir, output_dir, skewed, speedup):
         ax.set_ylabel(label, fontsize=8 * 2)
         ax.tick_params(axis="both", which="major", labelsize=7 * 2, width=1, length=6, bottom=True, left=True)
         y_max = overview.RUNTIME_MS.max()
-        x_max = overview.THRESHOLD.max()
-        x_ticks = [ x / 5 for x in range(0, int(x_max * 5) + 1)]
         ax.set_ylim((0, y_max * 1.05))
         plt.tight_layout(pad=0)
 

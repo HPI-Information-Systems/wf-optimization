@@ -1,7 +1,7 @@
 #!/bin/bash
 
+root_dir=$(pwd)
 mkdir -p evaluation/experiments
-ln -sf $(pwd)/evaluation/data $(pwd)/evaluation/experiments/data
 cd evaluation/experiments
 
 ../build/microbench 10000
@@ -22,8 +22,11 @@ cd evaluation/experiments
 ../build/adaptive_strategy --st
 
 git checkout pipeline-times
-cd ../../build/release && cmake --build . --config Release ; cd -
-cd ../build && cmake --build . --config Release ; cd -
+git pull
+cd "${root_dir}"/build/release && cmake --build . --config Release
+cd "${root_dir}"/evaluation/build && cmake --build . --config Release
+
+cd "${root_dir}"/evaluation/experiments
 
 ../build/playground 1000000 100 -w -l Baseline > pipeline_durations_100_partitions_baseline.txt
 ../build/playground 1000000 100 -w -l Combined > pipeline_durations_100_partitions_combined.txt
@@ -31,14 +34,14 @@ cd ../build && cmake --build . --config Release ; cd -
 ../build/playground 1000000 10000 -w -l Combined > pipeline_durations_10000_partitions_combined.txt
 
 git checkout main
-cd ../../build/release && cmake --build . --config Release ; cd -
-cd ../build && cmake --build . --config Release ; cd -
-cd ../../experiments_analyses
+git pull
+cd "${root_dir}"/build/release && cmake --build . --config Release
+cd "${root_dir}"/evaluation/build && cmake --build . --config Release
+cd "${root_dir}"/experiments_analyses
 ninja all_experiments
-cp results/* ../evaluation/experiments
-cd ../evaluation
+cp results/* "${root_dir}"/evaluation/experiments
 
 git checkout window_functions
-cd ../../build/release && cmake --build . --config Release ; cd -
-cd ../build && cmake --build . --config Release ; cd -
-cd ../..
+cd "${root_dir}"/build/release && cmake --build . --config Release
+cd "${root_dir}"/evaluation/build && cmake --build . --config Release
+cd "${root_dir}"

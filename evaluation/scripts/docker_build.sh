@@ -1,6 +1,6 @@
 #!/bin/bash
 
-git submodule update --init --recursive
+cd /wf
 COMMON_CMAKE_VARS="-DCMAKE_C_COMPILER=gcc-14 -DCMAKE_CXX_COMPILER=g++-14" \
     DISABLE_SANITIZER=1 DISABLE_VPTR_SANITIZER=1 GEN=ninja make release
 cd evaluation
