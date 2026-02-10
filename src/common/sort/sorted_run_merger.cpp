@@ -10,6 +10,7 @@
 #include "pdqsort.h"
 
 #include <algorithm>
+#include <optional>
 
 namespace {
 

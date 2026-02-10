@@ -7,6 +7,8 @@
 #include "duckdb/execution/operator/aggregate/window_operator_config.hpp"
 #include "duckdb/common/types/hyperloglog.hpp"
 
+#include <optional>
+
 namespace duckdb {
 
 //===--------------------------------------------------------------------===//

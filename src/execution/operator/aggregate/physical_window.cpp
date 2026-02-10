@@ -17,6 +17,7 @@
 #include <functional>
 #include <type_traits>
 #include <mutex>
+#include <optional>
 
 namespace duckdb {
 
