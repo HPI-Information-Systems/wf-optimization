@@ -262,6 +262,7 @@ def main(input_dir, output_dir, skewed, speedup):
     fig_width = 2 * (column_width if skewed else page_width)
     fig_height = column_width if skewed else 2 * column_width
     fig.set_size_inches(fig_width, fig_height)
+    plot_count = len(runtimes.ROW_COUNT.unique())
 
     y_label = "Runtime [ms]" if not speedup else "Speedup"
     for i, ax in enumerate(g.axes.flat):
