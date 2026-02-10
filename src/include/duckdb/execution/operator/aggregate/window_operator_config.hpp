@@ -5,6 +5,7 @@
 #include <stdexcept>
 #include <atomic>
 #include <chrono>
+#include <optional>
 
 namespace duckdb {
 
