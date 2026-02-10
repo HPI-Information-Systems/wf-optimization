@@ -42,7 +42,7 @@ def parse_data(data_dir, partitions, config):
 
     current_stage = None
     min_start = None
-    with open(file_name) as f:
+    with open(os.path.join(data_dir, file_name)) as f:
         for line in f:
             stripped = line.strip()
             if stripped in stages:

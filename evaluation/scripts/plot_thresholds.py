@@ -142,7 +142,7 @@ def main(input_dir, output_dir, skewed, speedup):
 
     data = []
     for input_file in files:
-        raw_data = pd.read_csv(input_file)
+        raw_data = pd.read_csv(os.path.join(data_dir, input_file))
         raw_data["Mode"] = "MT" if "mt.csv" in input_file else "ST"
         raw_data.rename(columns={'CONFIGURATION': 'Configuration'}, inplace=True)
         raw_data["Ind"] = raw_data["Configuration"].str.contains("Adaptive")

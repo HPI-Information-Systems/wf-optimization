@@ -89,7 +89,7 @@ def plot_data(data, **kwargs):
             x = r[c_i + 1]
             x_pos = t_positions[param_values.index(x)]
             ax.text(x_pos, y_limit * 1.001, format_number(round(r.runtime)), rotation=60, va="bottom", ha="left", fontsize=6*2)
-        print(query, param, [round(old / new, 1) for old, new in zip(vals["before"], vals["after"])])
+    print(query, param, [round(old / new, 1) for old, new in zip(vals["before"], vals["after"])])
 
 
     for spine in ax.spines.values():
