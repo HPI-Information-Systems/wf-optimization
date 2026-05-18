@@ -21,6 +21,12 @@ There are adaptations in multiple places:
   cd ../..
   ```
 
+- Dependencies
+  ```txt
+  cmake ninja-build golang python3 texlive texlive-fonts-extra
+  ```
+
+#### WF+ Operator
 - Data generation
   ```sh
   ./evaluation/scripts/generate_data.sh
@@ -31,7 +37,7 @@ There are adaptations in multiple places:
   ./evaluation/scripts/run_experiments.sh
   ```
   The result data is located in `evaluation/experiments`.
-  If you run on a multi-socket machine, you need to execute within a Docker container to restrict to a NUMA region:
+  If you run on a multi-socket machine, consider execution within a Docker container to restrict to a NUMA region:
   ```sh
     docker --run -v "$(pwd)":"$(pwd)" --cpuset-cpus <region CPUs> --cpuset-mems <region ID> -it ubuntu:24.04
   ```
@@ -42,7 +48,35 @@ There are adaptations in multiple places:
   ```
   The plots are located in `evaluation/figures`.
 
-- Dependencies
-  ```txt
-  cmake ninja-build golang python3 texlive texlive-fonts-extra
+
+#### Equivalences
+
+Benchmarks for the equivalence classes are provided on the `benchmark-equivalences` branch, which runs on unmodified DuckDB code.
+```sh
+git checkout benchmark-equivalences
+```
+
+- Build
+  ```sh
+  cmake --build build/release --config Release
+  cmake --build evaluation/build --config Release
+  ```
+
+- Data generation
+  ```sh
+  ./evaluation/scripts/create_equivalence_data.sh
+  ```
+
+- Run the equivalence benchmarks
+  ```sh
+  cd evaluation
+  ./build/benchmark_equivalences -t 30
+  cd ..
+  ```
+
+- Plot
+  ```sh
+  cd evaluation
+  python3 ./scripts/plot_equivalences.py
+  cd ..
   ```

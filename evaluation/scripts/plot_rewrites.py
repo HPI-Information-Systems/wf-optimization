@@ -50,7 +50,7 @@ def get_label(pos, x_labels, param, query):
         return value
     l = math.log(value, 10)
 
-    return f"$10^{{{int(l)}}}$"
+    return f"$10^{{{round(l)}}}$"
 
 def get_xlabel(config, query):
     if config == "rows":

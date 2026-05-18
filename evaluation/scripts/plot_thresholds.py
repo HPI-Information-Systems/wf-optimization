@@ -193,17 +193,20 @@ def main(input_dir, output_dir, skewed, speedup):
         fig = plt.gcf()
         column_width = 3.3374
         page_width = 7.00697
-        fig.set_size_inches(2 * column_width * 0.45, 2 * column_width * 0.45)
+        ax = plt.gca()
+        ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _: format_number(x)))
+        ax.yaxis.set_major_formatter(FuncFormatter(lambda x, _: format_number(x)))
+        fig.set_size_inches(2 * column_width * 0.45, 2 * column_width * 0.45 * 2/3)
         ax = plt.gca()
         for spine in ax.spines.values():
             spine.set_edgecolor('black')
             spine.set_visible(True)
 
-        ax.set_xlabel(r"Threshold $\delta$", fontsize=8 * 2)
-        label = "Average Runtime [ms]" if metric == "mean" else f"Geometric Mean Runtime [ms]"
+        ax.set_xlabel(r"Threshold $\delta$", fontsize=7 * 2)
+        label = "Avg. Runtime [ms]" if metric == "mean" else f"Geometric Mean Runtime [ms]"
 
-        ax.set_ylabel(label, fontsize=8 * 2)
-        ax.tick_params(axis="both", which="major", labelsize=7 * 2, width=1, length=6, bottom=True, left=True)
+        ax.set_ylabel(label, fontsize=7 * 2)
+        ax.tick_params(axis="both", which="major", labelsize=6 * 2, width=1, length=6, bottom=True, left=True)
         y_max = overview.RUNTIME_MS.max()
         ax.set_ylim((0, y_max * 1.05))
         plt.tight_layout(pad=0)

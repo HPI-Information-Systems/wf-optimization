@@ -97,21 +97,33 @@ def plot_data(data, skewed=False, order=[], speedup=False, **kwargs):
     if not skewed:
         ax.xaxis.set_major_locator(FixedLocator(y_ticks))
 
-    label = r"\# Partitions" if not skewed else r"Skew factor $\alpha$"
-    ax.set_xlabel(label, fontsize=8 * 2)
-    ax.tick_params(axis="both", which="major", labelsize=7 * 2, width=1, length=6, bottom=True, left=True)
+    mode = data.Mode.unique()[0]
+    rows = data.Rows.unique()[0]
+    label = r"\# Partitions" if not skewed else r"Skew Factor $\alpha$"
+    if not skewed:
+        if mode == "ST":
+            label += f"\n{format_number(rows)} Rows"
+    else:
+        label += f" ({mode})"
+
+
+    if skewed or mode == "ST":
+        ax.set_xlabel(label, fontsize=7 * 2)
+    else:
+        ax.set_xlabel(None)
+    ax.tick_params(axis="both", which="major", labelsize=6 * 2, width=1, length=6, bottom=True, left=True)
     ax.tick_params(axis="both", which="minor", bottom=False, left=False)
     ax.grid(which="major", axis="y", visible=True)
     for spine in ax.spines.values():
         spine.set_visible(True)
         spine.set_edgecolor('black')
 
-    mode = data.Mode.unique()[0]
-    rows = data.Rows.unique()[0]
+
     if skewed:
-        ax.set_title(mode, fontsize=7*2)
+        ax.set_title(mode, fontsize=6*2)
     else:
-        ax.set_title(f"{format_number(rows)} Rows ({mode})", fontsize=7*2)
+        ax.set_title(f"{format_number(rows)} Rows ({mode})", fontsize=6*2)
+    ax.set_title(None)
 
 
 def get_name(conf):
@@ -170,6 +182,7 @@ def main(input_dir, output_dir, skewed, speedup):
         raw_data["RUNTIME_MS"] = raw_data["RUNTIME_NS"] / 10**6
         raw_data.rename(columns={'CONFIGURATION': 'Configuration'}, inplace=True)
         raw_data = raw_data[["Configuration", "ROW_COUNT", "PARTITION_COUNT", "Mode", "RUNTIME_MS"]]
+        raw_data = raw_data[raw_data.Configuration != "ShrinkPartitionsAdaptive"]
         data.append(raw_data)
 
     runtimes = pd.concat(data)
@@ -222,7 +235,7 @@ def main(input_dir, output_dir, skewed, speedup):
     g.map_dataframe(plot_data, skewed=skewed, order=order, speedup=speedup)
 
     col_count = len(configs) if not skewed else 3
-    bbox = (0.5, 1.07) if not skewed else (0.5, 1.2)
+    bbox = (0.5, 1.1) if not skewed else (0.5, 1.25)
     legend_names = {get_name(c): v  for c, v in g._legend_data.items()}
     legend_order = [c for c in order if c != "Combined"] + ["Combined"]
     l_order = [get_name(c) for c in legend_order]
@@ -245,7 +258,9 @@ def main(input_dir, output_dir, skewed, speedup):
     label = "Speedup" if speedup else "Runtime [ms]"
     for i, ax in enumerate(g.axes.flat):
         if (i == 0 or (i > 1 and plot_count % i == 0)):
-            ax.set_ylabel(label, fontsize=8 * 2)
+            prefix = "MT" if i == 0 else "ST"
+            title = label.capitalize() if skewed else f"{prefix} {label}"
+            ax.set_ylabel(title, fontsize=7 * 2)
         else:
             ax.set_ylabel("")
 
@@ -254,12 +269,12 @@ def main(input_dir, output_dir, skewed, speedup):
     page_width = 7.00697
     fig_width = column_width * 2
     fig_width = 2 * (column_width if skewed else page_width)
-    fig_height = column_width if skewed else 2 * column_width
+    fig_height = (column_width * 1.1 if skewed else 2 * column_width) * 2/3
     fig.set_size_inches(fig_width, fig_height)
 
     plt.tight_layout(pad=0)
     if not skewed:
-        g.fig.subplots_adjust(hspace=0.35)
+        g.fig.subplots_adjust(hspace=0.3)
     else:
         g.fig.subplots_adjust(wspace=0.2)
 

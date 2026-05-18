@@ -23,8 +23,8 @@ cd evaluation/experiments
 
 git checkout pipeline-times
 git pull
-cd "${root_dir}"/build/release && cmake --build . --config Release
-cd "${root_dir}"/evaluation/build && cmake --build . --config Release
+cmake --build "${root_dir}"/build/release --config Release
+cmake --build "${root_dir}"/evaluation/build --config Release
 
 cd "${root_dir}"/evaluation/experiments
 
@@ -33,15 +33,7 @@ cd "${root_dir}"/evaluation/experiments
 ../build/playground 1000000 10000 -w -l Baseline > pipeline_durations_10000_partitions_baseline.txt
 ../build/playground 1000000 10000 -w -l Combined > pipeline_durations_10000_partitions_combined.txt
 
-git checkout main
-git pull
-cd "${root_dir}"/build/release && cmake --build . --config Release
-cd "${root_dir}"/evaluation/build && cmake --build . --config Release
-cd "${root_dir}"/experiments_analyses
-ninja all_experiments
-cp results/* "${root_dir}"/evaluation/experiments
-
 git checkout window_functions
-cd "${root_dir}"/build/release && cmake --build . --config Release
-cd "${root_dir}"/evaluation/build && cmake --build . --config Release
+cmake --build "${root_dir}"/build/release --config Release
+cmake --build "${root_dir}"/evaluation/build --config Release
 cd "${root_dir}"
