@@ -1,0 +1,3 @@
+SELECT *,
+       SUM(salary) OVER (ROWS BETWEEN CURRENT ROW AND CURRENT ROW) res
+  FROM employees;
