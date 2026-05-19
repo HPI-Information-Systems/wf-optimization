@@ -99,14 +99,6 @@ int main(int argc, char* argv[]) {
 		queries[entry.path().stem()] = read_file(entry.path().c_str());
 	}
 
-
-	auto ofstream = std::ofstream{};
-	auto result_filename = std::stringstream{};
-	result_filename << "db_comparison_results/database_comparison__duckdb.csv";
-	ofstream.open(result_filename.str());
-	ofstream << "DATABASE_SYSTEM,CORES,CLIENTS,ITEM_NAME,RUNTIME_MS\n";
-	ofstream << std::fixed;
-
 	con.BeginTransaction();
 	con.Query("CREATE TABLE employees (employee_id int, dept varchar(20), salary float);");
 	con.Query("CREATE TABLE sales (sale_id int, sold_date date, price float, sold_date_sk int);");
@@ -146,6 +138,14 @@ int main(int argc, char* argv[]) {
 
 		return 0;
 	}
+
+
+	auto ofstream = std::ofstream{};
+	auto result_filename = std::stringstream{};
+	result_filename << "db_comparison_results/database_comparison__duckdb.csv";
+	ofstream.open(result_filename.str());
+	ofstream << "DATABASE_SYSTEM,CORES,CLIENTS,ITEM_NAME,RUNTIME_MS\n";
+	ofstream << std::fixed;
 
 
 	for (const auto& [query_name, query] : queries) {
