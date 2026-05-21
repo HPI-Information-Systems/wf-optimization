@@ -1,0 +1,10 @@
+data
+*.csv
+
+build
+build-debug
+experiments
+figures
+
+experiment_data
+db_experiment_results

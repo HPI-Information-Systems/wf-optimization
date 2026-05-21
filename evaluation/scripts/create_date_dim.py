@@ -1,27 +1,31 @@
 import pandas as pd
 import argparse as ap
 import os
+import datetime
 
 def parse_args():
     parser = ap.ArgumentParser()
     parser.add_argument("sales_path", type=str)
-    parser.add_argument("--output", "-o", type=str, default="./data")
+    parser.add_argument("--output", "-o", type=str, default="./resources/experiment_data")
     return parser.parse_args()
 
+def generate_key(value):
+    return datetime.date.fromisoformat(value).toordinal()
 
 def main(sales_path, output_dir):
-    dates = dict()
-
-    with open(os.path.join(output_dir, "date_dim.csv"), "w") as f:
-        # f.write("d_date_sk,d_date,d_year,d_moy,d_dom\n")
-        for date in pd.date_range(start="1970-01-01", end="2025-12-31"):
-            f.write(f"{date.date().toordinal()},{date.date().isoformat()},{date.year},{date.month},{date.day}\n")
-            dates[date.date().isoformat()] = date.date().toordinal()
-
     sales = pd.read_csv(sales_path)
-    sold_date_sk = [dates[date] for date in sales.sold_date]
-    sales["sold_date_sk"] = sold_date_sk
-    sales.to_csv(sales_path.replace(".csv", "_sk.csv"), header=False, index=False)
+    sales["sold_date_sk"] = sales.sold_date.apply(generate_key)
+    sales_file_name = sales_path.split("/")[-1]
+    os.makedirs(output_dir, exist_ok=True)
+    sales.to_csv(os.path.join(output_dir, sales_file_name), header=True, index=False)
+
+    min_year = min(sales.sold_date)[:4]
+    max_year = max(sales.sold_date)[:4]
+
+    with open(os.path.join(output_dir, f"date_dim{sales_file_name[len('sales'):]}"), "w") as f:
+        f.write("d_date_sk,d_date,d_year,d_moy,d_dom\n")
+        for date in pd.date_range(start=f"{min_year}-01-01", end=f"{max_year}-12-31"):
+            f.write(f"{date.date().toordinal()},{date.date().isoformat()},{date.year},{date.month},{date.day}\n")
 
 
 if __name__ == '__main__':

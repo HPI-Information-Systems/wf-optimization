@@ -43,11 +43,6 @@ parser.add_argument(
 parser.add_argument("--time", "-t", type=int, default=60)
 parser.add_argument("--port", "-p", type=int, default=5432)
 parser.add_argument("--cores", type=int, default=28)
-parser.add_argument("--clients", "-c", type=int, default=1)
-parser.add_argument("--skip_warmup", action="store_true")
-parser.add_argument("--skip_data_loading", action="store_true")
-parser.add_argument("--explain", action="store_true")
-parser.add_argument("--show", action="store_true")
 args = parser.parse_args()
 
 def add_count(query):
@@ -97,7 +92,7 @@ elif args.dbms == "duckdb":
 else:
     raise AttributeError(f"Unknown DBMS: '{args.dbms}'")
 
-def import_data():
+def import_data(row_count_e, row_count_s, partitions_e, partitions_s, alpha):
     data_path = os.path.join(os.getcwd(), "resources/experiment_data")
 
     if args.dbms == "monetdb":
@@ -105,11 +100,11 @@ def import_data():
     elif args.dbms in ["hyrise", "hyrise-int"]:
         load_command = """COPY "{}" FROM '{}';"""
     elif args.dbms == "umbra":
-        load_command = """COPY "{}" FROM '{}' WITH (FORMAT CSV, DELIMITER ',', NULL '', QUOTE '"');"""
+        load_command = """COPY "{}" FROM '{}' WITH (FORMAT CSV, DELIMITER ',', NULL '', QUOTE '"' HEADER true);"""
     elif args.dbms == "greenplum":
         load_command = """COPY "{}" FROM '{}' WITH (FORMAT CSV, DELIMITER ',', NULL '', QUOTE '"');"""
     elif args.dbms == "duckdb":
-        load_command = """COPY "{}" FROM '{}' WITH (FORMAT CSV, DELIMITER ',', NULL '', QUOTE '"');"""
+        load_command = """COPY "{}" FROM '{}' WITH (FORMAT CSV, DELIMITER ',', NULL '', QUOTE '"' HEADER true);"""
     elif args.dbms == "postgres":
         load_command = """COPY "{}" FROM '{}' WITH (FORMAT CSV, DELIMITER ',', NULL '', QUOTE '"');"""
 
@@ -129,7 +124,10 @@ def import_data():
             cursor.execute(stripped_line)
 
     for t_id, table_name in enumerate(table_order):
-        table_file_path = f"{data_path}/{table_name}.csv"
+        num_rows = row_count_e if table_name == "employees" else row_count_s
+        num_partitions = partitions_e if table_name == "employees" else partitions_s
+        num_rows = {10**4: "10k", 10**5: "100k", 10**6: "1m", 10**7: "10m", 10**8: "100m"}
+        table_file_path = f"{data_path}/{table_name}_p{num_partitions}_a{alpha}_s42.csv"
         print(f" - ({t_id + 1}/{len(table_order)}) Import {table_name} from {table_file_path} ...", end=" ", flush=True)
         start = time.perf_counter()
         cursor.execute(load_command.format(table_name, table_file_path))
@@ -141,14 +139,14 @@ def import_data():
         connection.commit()
     connection.close()
 
-def explain(queries):
+def explain(queries, experiment, run_id):
     output_dir = f"db_comparison_results/plans/{args.dbms}"
     os.makedirs(output_dir, exist_ok=True)
 
     connection, cursor = get_cursor()
     for query_name, query in queries.items():
         cursor.execute("explain analyze " + query)
-        with open(os.path.join(output_dir, f"plan_{query_name}.txt"), "w") as f:
+        with open(os.path.join(output_dir, f"plan_{query_name}_{experiment}_{run_id}.txt"), "w") as f:
             for line in cursor.fetchall():
                 for t in line:
                     f.write(t)
@@ -208,94 +206,118 @@ def loop(thread_id, queries, query_id, start_time, successful_runs, timeout, is_
     cursor.close()
     connection.close()
 
-
-if not args.skip_data_loading:
-    import_data()
-
-
-print("Warming up database (complete single-threaded run): ", end="")
-sys.stdout.flush()
-loop(0, selected_benchmark_queries, "warmup", time.perf_counter(), [], 3600, True)
-print(" done.")
-sys.stdout.flush()
-
 os.makedirs("db_comparison_results", exist_ok=True)
 
-runtimes = {}
 benchmark_queries = reversed(sorted(selected_benchmark_queries.keys()))
 
-if args.explain:
-    explain(selected_benchmark_queries)
-    sys.exit()
+def run_experiment(experiment, run_id, force_new_file, benchmark_rows, benchmark_partitions, alpha)
 
-if args.show:
-    show(selected_benchmark_queries)
-    sys.exit()
+    explain(selected_benchmark_queries, experiment, run_id)
 
-for query_name in benchmark_queries:
-    print("Benchmarking {}...".format(query_name), end="", flush=True)
+    runtimes = {}
+    for query_name in benchmark_queries:
+        print("Benchmarking {}...".format(query_name), end="", flush=True)
 
-    successful_runs = []
-    start_time = time.perf_counter()
+        # Warmup run
+        connection, cursor = get_cursor()
+        cursor.execute(selected_benchmark_queries[query_name])
+        cursor.close()
+        connection.close()
 
-    timeout = args.time
+        successful_runs = []
+        start_time = time.perf_counter()
 
-    threads = []
-    for thread_id in range(0, args.clients):
-        threads.append(
-            threading.Thread(
-                target=loop,
-                args=(thread_id, selected_benchmark_queries, query_name, start_time, successful_runs, timeout),
-            )
-        )
-        threads[-1].start()
+        timeout = args.time
 
-    while True:
-        time_left = start_time + timeout - time.perf_counter()
-        if time_left < 0:
-            break
-        print("\rBenchmarking {}... {:.0f} seconds left".format(query_name, time_left), end="")
-        time.sleep(1)
+        thread = threading.Thread(
+                    target=loop,
+                    args=(thread_id, selected_benchmark_queries, query_name, start_time, successful_runs, timeout),
+                )
+        thread.start()
 
-    while True:
-        joined_threads = 0
-        for thread_id in range(0, args.clients):
-            if not threads[thread_id].is_alive():
-                # print(f't{thread_id} finished')
-                joined_threads += 1
-
-        if joined_threads == args.clients:
-            break
-        else:
-            print(
-                "\rBenchmarking {}... waiting for {} more clients to finish".format(
-                    query_name, args.clients - joined_threads
-                ),
-                end="",
-            )
+        while True:
+            time_left = start_time + timeout - time.perf_counter()
+            if time_left < 0:
+                break
+            print("\rBenchmarking {}... {:.0f} seconds left".format(query_name, time_left), end="")
             time.sleep(1)
 
-    print("\r" + " " * 80, end="")
-    item_runs = successful_runs
-    print(
-        "\r{}\t>>\t avg.: {:10.4f} ms\tmed.: {:10.4f} ms\tmin.: {:10.4f} ms\tmax.: {:10.4f} ms\tfinished {}".format(
-            query_name,
-            sum(item_runs) / len(item_runs) if len(item_runs) > 0 else 0,
-            statistics.median(item_runs) if len(item_runs) > 0 else 0,
-            min(item_runs) if len(item_runs) > 0 else 0,
-            max(item_runs) if len(item_runs) > 0 else 0,
-            str(datetime.datetime.now().time()),
-        )
-    )
+        while True:
+            if not thread.is_alive():
+                break
 
-    runtimes[query_name] = successful_runs
+            else:
+                print(
+                    "\rBenchmarking {}... waiting for more client to finish".format(
+                        query_name
+                    ),
+                    end="",
+                )
+                time.sleep(1)
 
-result_csv_filename = "db_comparison_results/database_comparison__{}.csv".format(args.dbms)
-
-with open(result_csv_filename, "w") as result_csv:
-    result_csv.write("DATABASE_SYSTEM,CORES,CLIENTS,ITEM_NAME,RUNTIME_MS\n")
-    for item_name, runs in runtimes.items():
-        for run in runs:
-            result_csv.write(
-                "{},{},{},{},{}\n".format(args.dbms, args.cores, args.clients, item_name, run)
+        print("\r" + " " * 80, end="")
+        item_runs = successful_runs
+        print(
+            "\r{}\t>>\t avg.: {:10.4f} ms\tmed.: {:10.4f} ms\tmin.: {:10.4f} ms\tmax.: {:10.4f} ms\tfinished {}".format(
+                query_name,
+                sum(item_runs) / len(item_runs) if len(item_runs) > 0 else 0,
+                statistics.median(item_runs) if len(item_runs) > 0 else 0,
+                min(item_runs) if len(item_runs) > 0 else 0,
+                max(item_runs) if len(item_runs) > 0 else 0,
+                str(datetime.datetime.now().time()),
             )
+        )
+
+        runtimes[query_name] = successful_runs
+        on_employees = query_name.startswith("equiv6") or query_name.startswith("equiv2")
+        table = "employees" if on_employees else "sales"
+        rows_per_item[query_name] = benchmark_rows[table]
+        partitions_per_item[query_name] = benchmark_partitions[table]
+
+
+    result_csv_filename = "db_comparison_results/database_comparison__{}.csv".format(args.dbms)
+    with open(result_csv_filename, "w" if force_new_file else "a") as result_csv:
+        if force_new_file:
+            result_csv.write("DATABASE_SYSTEM,CORES,ITEM_NAME,ROWS,PARTITIONS,ALPHA,EXPERIMENT,RUNTIME_MS\n")
+        for item_name, runs in runtimes.items():
+            run_rows = rows_per_item[item_name]
+            run_partitions = partitions[item_name]
+            for run in runs:
+                result_csv.write(
+                    "{},{},{},{},{}\n".format(args.dbms, args.cores, item_name, run_rows, run_partitions, alpha, experiment, run)
+                )
+
+alphas = [0, 0.5, 1, 1.5, 2]
+base_rows = {"employees": 10**7, "sales": 10**6}
+partitions = {"employees": [10, 100, 1000, 10000, 100000], "sales": [10, 50, 100, 200, 400]}
+base_partitions = {"employees": 10, "sales": 50}
+rows = [10**4, 10**5, 10**6, 10**7, 10**8]
+
+# First experiment: Number of rows
+print("EXPERIMENT 1: ROW COUNT")
+for experiment_id, row_count in enumerate(rows):
+    print()
+    print(f"- {rows} rows")
+    import_data(row_count, row_count, base_partitions["employees"], base_partitions["sales"], 0.0)
+    create_new_file = row_count == rows[0]
+    run_experiment("rows", experiment_id, create_new_file, {"employees": rows, "sales": rows}, base_partitions, 0.0)
+
+# Second experiment: Number of partitions
+print("\n\nEXPERIMENT 2: PARTITION COUNT")
+assert len(partitions["employees"]) == len(partitions["sales"])
+for experiment_id in range(len(partitions["employees"])):
+    partitions_e = partitions["employees"][experiment_id]
+    partitions_s = partitions["sales"][experiment_id]
+    print()
+    print(f"- {partitions_e}/{partitions_s} partitions")
+    import_data(base_rows["employees"], base_rows["sales"], partitions_e, partitions_s, 0.0)
+    run_experiment("partitions", experiment_id, False, base_rows, {"employees": partitions_e, "sales": partitions_s}, 0.0)
+
+# Third experiment: Skewness
+print("\n\nEXPERIMENT 3: SKEWNESS")
+assert len(partitions["employees"]) == len(partitions["sales"])
+for experiment_id, alpha in enumerate(alphas):
+    print()
+    print(f"- Alpha {alpha}")
+    import_data(base_rows["employees"], base_rows["sales"], base_partitions["employees"], base_partitions["sales"], alpha)
+    run_experiment("alpha", experiment_id, False, base_rows, {"employees": partitions_e, "sales": partitions_s}, alpha)

@@ -3,4 +3,4 @@
     FROM (SELECT *,
   	             rank() OVER (order by price, sale_id) res FROM sales) AS s
 ORDER BY price
-   LIMIT 20;
+   LIMIT 3;
