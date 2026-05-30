@@ -86,11 +86,11 @@ def get_tick_label(pos, x_labels, param, query):
     }
     is_default = default_values[("employees" if on_employees else "sales", param)] == value
     if param == "alpha" or param == "partitions" and not on_employees:
-        return f"$\\mathbf{{{value}}}$" if is_default else f"${value}$"
-    l = math.log(value, 10)
+        return f"\\underline{{$\\mathbf{{{value}}}$}}" if is_default else f"${value}$"
+    l = round(math.log(value, 10))
 
-    label = f"10^{{{round(l)}}}"
-    return f"$\\mathbf{{{label}}}$" if is_default else f"${label}$"
+    label = f"10^{{{l}}}" # if l > 1 else "10^{\\,}"
+    return f"\\underline{{$\\mathbf{{{label}}}$}}" if is_default else f"${label}$"
 
 
 def get_xlabel(system, config, query):
@@ -131,6 +131,17 @@ def plot_data(data, overall_max=None, **kwargs):
     lim = overall_max[experiment_] * 1.05
     y_max = max(data.RUNTIME_MS)
     lim = y_max
+
+    runtimes = data.sort_values(by="RUNTIME_MS").RUNTIME_MS
+    third_most = runtimes.iat[-3]
+    second_most = runtimes.iat[-2]
+    ref = third_most if second_most > 4 * third_most else second_most
+    if lim > ref * 2:
+        lim = ref * 2
+
+    lim *= 1.05
+
+
     if len(data) > 0:
         vals = defaultdict(list)
         for version, offset, t_offset, col in zip(["before", "after"], offsets, t_offsets, get_palette()):
@@ -143,7 +154,7 @@ def plot_data(data, overall_max=None, **kwargs):
             #     vals[config].append(r.runtime)
             for r in d.itertuples():
                 val = r.RUNTIME_MS
-                y_val = val # min(r.RUNTIME_MS, lim)
+                y_val = min(val, lim)
                 too_small = y_val <= lim * 0.15
                 y_pos = y_val  + (lim * 0.01) if too_small else y_val - (lim * 0.01)
                 color = "black" if too_small or version == "before" else "white"
@@ -159,14 +170,16 @@ def plot_data(data, overall_max=None, **kwargs):
         # print(xes)
         speedups = [old / new for old, new in  zip(vals["before"], vals["after"])]
         max_speedup = max(speedups)
+        ax.set_ylim((0, lim))
         for old, new, x_center, speedup in zip(vals["before"], vals["after"], x_centers, speedups):
             if speedup != max_speedup or speedup < 1.1:
                 continue
 
-            center = new + (old - new) / 2
+            upper = min(old, lim)
+            center = new + (upper - new) / 2
             x = x_center + offsets[1]
             factor = f"{float(speedup):,.1f}".replace(",", r"\thinspace")
-            print(equivalence, param, speedup, xes[x_center], old, new)
+            print(equivalence, param, speedup, xes[x_center], upper, new)
             too_small = new <= lim * 0.15
 
             s = math.ceil(math.log(round(new), 10))
@@ -174,7 +187,7 @@ def plot_data(data, overall_max=None, **kwargs):
 
             ax.annotate(
                 f"$\\times$\\thinspace{factor}",
-                xy=(x, old),
+                xy=(x, upper),
                 xycoords="data",
                 xytext=(x, center),
                 textcoords="data",
@@ -198,8 +211,9 @@ def plot_data(data, overall_max=None, **kwargs):
                 color="black",
             )
 
-            line_offset = bar_width * 0.45
-            ax.plot([x - line_offset, x + line_offset], [old, old], color="black", lw=1)
+            if old < lim:
+                line_offset = bar_width * 0.45
+                ax.plot([x - line_offset, x + line_offset], [upper, upper], color="black", lw=1)
 
 
 
@@ -208,7 +222,6 @@ def plot_data(data, overall_max=None, **kwargs):
         #     d = data[data.ITEM_NAME.str.contains(config)]
         #     ax.bar(offset, d.RUNTIME_MS, zorder=3, width=0.4, linewidth=0, color=col)
 
-    # ax.set_ylim((0, lim))
     # ax.set_ylim((0, None))
 
     for spine in ax.spines.values():
