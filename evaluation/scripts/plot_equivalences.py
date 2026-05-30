@@ -317,7 +317,7 @@ def main(data_dir, output_dir, cold):
         g.map_dataframe(plot_data, overall_max=percentiles)
         #plt.gcf().subplots_adjust()
         handles = []
-        for stage, col in zip(["Left-hand side", "Right-hand side"], get_palette()):
+        for stage, col in zip(["Left-Hand Side", "Right-Hand Side"], get_palette()):
             handles.append(mpatches.Patch(color=col, label=stage))
         g.add_legend(
             handles=handles,
